@@ -5,16 +5,14 @@ import System.Environment ( getArgs, getProgName )
 import System.Exit ( exitFailure, exitSuccess )
 
 import Frontend
-import ErrM
-import AbsLatte
 
 process :: String -> IO ()
 process s = case getRepr s of
-          Bad e -> do
+          Left e -> do
             putStrLn "Error:"
             putStrLn e
             exitFailure
-          Ok tree -> do
+          Right tree -> do
             print (tree::Program)
             exitSuccess
 
