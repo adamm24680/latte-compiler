@@ -101,27 +101,28 @@ inferExpr env x = case x of
     return Bool
   EOr expr1 expr2 -> inferExpr env (EAnd expr1 expr2)
 
-checkStmts :: Env -> [Stmt] -> Err Env
-checkStmts = undefined
+--checkStmts :: Env -> [Stmt] -> Err Env
+--checkStmts = foldM (\a b -> checkStmt a rettype b)
 
 checkStmt :: Env -> Type -> Stmt -> Err Env
 checkStmt env rettype x = case x of
   Empty -> return env
   BStmt (Block stmts) -> do
+    let checkStmts = foldM (\a b -> checkStmt a rettype b)
     checkStmts (enterBlock env) stmts
     return env
-  Decl type_ items -> do
-    return env -- TODO
-    where {process item = case item of
+  Decl type_ items ->
+    foldM process env items
+    where {process env1 item = case item of
       NoInit ident -> do
         when (checkVarBlockDecl env ident)
           (fail $ "variable " ++ show ident ++ "redeclared in " ++ printTree x)
-        updateVarType env ident type_
+        updateVarType env1 ident type_
       Init ident expr -> do
         when (checkVarBlockDecl env ident)
           (fail $ "variable " ++ show ident ++ "redeclared in " ++ printTree x)
         checkExpr env type_ expr
-        updateVarType env ident type_}
+        updateVarType env1 ident type_}
   Ass ident expr -> do
     typ <- inferExpr env (EVar ident)
     checkExpr env typ expr
