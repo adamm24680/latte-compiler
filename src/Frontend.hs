@@ -9,11 +9,16 @@ import PrintLatte
 import AbsLatte
 import Control.Monad
 
-data FunType = FunType Type [Type]
+data FunType = FunType Type [Type] deriving (Eq)
 
 type VarContext = Map.Map Ident Type
 type FunContext = Map.Map Ident FunType
 type Env = (FunContext, [VarContext])
+
+
+errToBool :: Err a -> Bool
+errToBool (Ok _) = True
+errToBool (Bad _) = False
 
 
 checkVarBlockDecl :: Env -> Ident -> Bool
@@ -101,18 +106,17 @@ inferExpr env x = case x of
     return Bool
   EOr expr1 expr2 -> inferExpr env (EAnd expr1 expr2)
 
---checkStmts :: Env -> [Stmt] -> Err Env
---checkStmts = foldM (\a b -> checkStmt a rettype b)
+checkStmts :: Env -> Type -> [Stmt] -> Err Env
+checkStmts env rettype =
+  foldM (\env1 stmt -> checkStmt env1 rettype stmt) env
 
 checkStmt :: Env -> Type -> Stmt -> Err Env
 checkStmt env rettype x = case x of
   Empty -> return env
   BStmt (Block stmts) -> do
-    let checkStmts = foldM (\a b -> checkStmt a rettype b)
-    checkStmts (enterBlock env) stmts
+    checkStmts (enterBlock env) rettype stmts
     return env
-  Decl type_ items ->
-    foldM process env items
+  Decl type_ items -> foldM process env items
     where {process env1 item = case item of
       NoInit ident -> do
         when (checkVarBlockDecl env ident)
@@ -142,6 +146,37 @@ checkStmt env rettype x = case x of
     return env
   While expr stmt -> checkStmt env rettype (Cond expr stmt)
   SExp expr -> inferExpr env expr >> return env
+
+
+declTopDef :: Env -> TopDef -> Err Env
+declTopDef env (FnDef type_ ident args block) =
+  updateFunType env ident (FunType type_ argtypes)
+  where argtypes = map (\(Arg type1 _)-> type1) args
+
+checkTopDef :: Env -> TopDef -> Err ()
+checkTopDef env (FnDef type_ ident args block)  = do
+  let {insertArg env1 (Arg type1 ident1) = do
+    when (checkVarBlockDecl env1 ident1)
+      (fail $ "parameter " ++ show ident1 ++ "redeclared in function definition for " ++ show ident)
+    updateVarType env1 ident1 type1}
+  env2 <- foldM insertArg env args
+  let (Block stmts) = block
+  void $ checkStmts env2 type_ stmts
+
+checkProgram (Program topdefs) = do
+  env1 <- foldM declTopDef emptyEnv topdefs
+  let checked = map (checkTopDef env1) topdefs
+  if any (not . errToBool) checked then
+    let {append a x = case x of
+      Ok _ -> a
+      Bad e -> a ++ e ++ "\n"}
+    in fail $ foldl append "" checked
+  else do
+    mainType <- getFunType env1 (Ident "main")
+    when (mainType /= FunType Void [])
+      (fail  "main function has wrong type (should be void())")
+    return ()
+
 
 parse :: String -> Err Program
 parse = pProgram . myLexer
