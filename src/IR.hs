@@ -69,7 +69,7 @@ instance Show Quadruple where
      QBinOp d op s1 s2 -> printf "  %s = %s %s %s" d s1 op s2
      QCompOp d op s1 s2 -> printf "  %s = %s %s %s" d s1 op s2
      QAnd d s1 s2 -> printf "  %s = %s && %s" d s1 s2
-     QOr d s1 s2 -> printf "  %s = %s && %s" d s1 s2
+     QOr d s1 s2 -> printf "  %s = %s || %s" d s1 s2
      QNeg d s -> printf "  %s = -%s" d s
      QNot d s -> printf "  %s = !%s" d s
      QLoad d s -> printf "  %s = load %s" d s
@@ -80,7 +80,7 @@ instance Show Quadruple where
      QParam r -> printf "  param %s" r
      QCall d l -> printf "  %s = call %s" d (show l)
      QCallExternal d l -> printf "  %s = call external %s" d l
-     QPhi d s1 s2 -> printf "  %s = phi(s1, s2)"
+     QPhi d s1 s2 -> printf "  %s = phi(%s, %s)" d s1 s2
      QVRet -> "  ret"
      QRet r -> printf "  ret %s" r
      QBasePointer d -> printf "  %s = gen bp" d
@@ -373,7 +373,7 @@ data QFunDef = QFunDef Ident Type [Quadruple] Integer
 
 instance Show QFunDef where
   show (QFunDef (Ident ident) type_ quads _) =
-    printf "function %s {\n%s\n}" ident $ unlines (map show quads)
+    printf "function %s {\n%s}" ident $ unlines (map show quads)
 
 genFun :: TopDef -> QFunDef
 genFun (FnDef type_ ident args block) =
