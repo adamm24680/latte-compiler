@@ -1,5 +1,5 @@
 module IR
-  (Operand, Label, Quadruple, BinOp, CompOp, genFun)
+  (Operand, Label, Quadruple, BinOp, CompOp, QFunDef, genProgram)
   where
 
 
@@ -42,12 +42,6 @@ instance PrintfArg Label where
    formatArg (Label s) _ = showString s
 data VarLoc = Stack Integer
 
-
-
-data GenEnv = GenEnv {
-  varInfo :: Map.Map Ident (VarLoc, Type),
-  basePointer :: Operand }
-
 data Quadruple =
   QBinOp Operand BinOp Operand Operand |
   QCompOp Operand CompOp Operand Operand |
@@ -72,30 +66,35 @@ data Quadruple =
 
 instance Show Quadruple where
    show x = case x of
-     QBinOp d op s1 s2 ->  printf "%s = %s %s %s" d op s1 s2
-     QCompOp d op s1 s2 -> printf "%s = %s %s %s" d op s1 s2
-     QAnd d s1 s2 -> printf "%s = %s && %s" d s1 s2
-     QOr d s1 s2 -> printf "%s = %s && %s" d s1 s2
-     QNeg d s -> printf "%s = -%s" d s
-     QNot d s -> printf "%s = !%s" d s
-     QLoad d s -> printf "%s = load %s" d s
-     QStore d s -> printf "store %s, %s" d s
-     QCopy d s -> printf "%s = %s" d s
-     QGoto l -> printf "goto %s" l
-     QGotoBool r l1 l2 -> printf "if %s goto %s else %s" r l1 l2
-     QParam r -> printf "param %s" r
-     QCall d l -> printf "%s = call %s" d (show l)
-     QCallExternal d l -> printf "%s = call external %s" d l
-     QPhi d s1 s2 -> printf "%s = phi(s1, s2)"
-     QVRet -> "ret"
-     QRet r -> printf "ret %s" r
-     QBasePointer d -> printf "%s = gen bp" d
+     QBinOp d op s1 s2 -> printf "  %s = %s %s %s" d s1 op s2
+     QCompOp d op s1 s2 -> printf "  %s = %s %s %s" d s1 op s2
+     QAnd d s1 s2 -> printf "  %s = %s && %s" d s1 s2
+     QOr d s1 s2 -> printf "  %s = %s && %s" d s1 s2
+     QNeg d s -> printf "  %s = -%s" d s
+     QNot d s -> printf "  %s = !%s" d s
+     QLoad d s -> printf "  %s = load %s" d s
+     QStore d s -> printf "  store %s, %s" d s
+     QCopy d s -> printf "  %s = %s" d s
+     QGoto l -> printf "  goto %s" l
+     QGotoBool r l1 l2 -> printf "  if %s goto %s else %s" r l1 l2
+     QParam r -> printf "  param %s" r
+     QCall d l -> printf "  %s = call %s" d (show l)
+     QCallExternal d l -> printf "  %s = call external %s" d l
+     QPhi d s1 s2 -> printf "  %s = phi(s1, s2)"
+     QVRet -> "  ret"
+     QRet r -> printf "  ret %s" r
+     QBasePointer d -> printf "  %s = gen bp" d
+     QLabel l -> printf "%s:" l
 
 data GenState = GenState {
   labelCounter :: Integer,
   regCounter:: Integer,
   stackOffset :: Integer
   }
+
+data GenEnv = GenEnv {
+  varInfo :: Map.Map Ident (VarLoc, Type),
+  basePointer :: Operand }
 
 type GenM a = RWS GenEnv [Quadruple] GenState a
 
@@ -105,7 +104,6 @@ getStackLocation = do
   let offset = stackOffset state -1
   put state{stackOffset = offset}
   return $ Stack offset
-
 
 newState :: GenState
 newState =
@@ -175,7 +173,7 @@ emitCallExternal str = do
 
 emitWrite :: Operand -> Int -> Operand -> GenM ()
 emitWrite base offset value = do
-  dest <- emitBin QBinOp QAdd (LitInt . toInteger $(4*offset)) base
+  dest <- emitBin QBinOp QSub base (LitInt . toInteger $((-4)*offset))
   emit $ QStore dest value
 
 emitLoadAddress :: VarLoc -> GenM Operand
@@ -183,7 +181,7 @@ emitLoadAddress varloc = do
   env <- ask
   case varloc of
     Stack offset ->
-      emitBin QBinOp QAdd (LitInt . toInteger $(4*offset)) (basePointer env)
+      emitBin QBinOp QSub (basePointer env) (LitInt . toInteger $((-4)*offset))
 
 
 
@@ -325,13 +323,13 @@ genStmt x = case x of
   Incr ident -> do
     reg <- getAddr ident
     val <- emitUn QLoad reg
-    res <- emitBin QBinOp QAdd (LitInt 1) val
+    res <- emitBin QBinOp QAdd val (LitInt 1)
     emit $ QStore reg res
     ask
   Decr ident -> do
     reg <- getAddr ident
     val <- emitUn QLoad reg
-    res <- emitBin QBinOp QAdd (LitInt 1) val
+    res <- emitBin QBinOp QAdd val (LitInt 1)
     emit $ QStore reg res
     ask
   Ret expr -> genExpr expr >>= (emit . QRet) >> ask
@@ -371,7 +369,11 @@ genStmt x = case x of
     genExpr expr
     ask
 
-data QFunDef = QFunDef Ident Type [Quadruple]
+data QFunDef = QFunDef Ident Type [Quadruple] Integer
+
+instance Show QFunDef where
+  show (QFunDef (Ident ident) type_ quads _) =
+    printf "function %s {\n%s\n}" ident $ unlines (map show quads)
 
 genFun :: TopDef -> QFunDef
 genFun (FnDef type_ ident args block) =
@@ -380,9 +382,12 @@ genFun (FnDef type_ ident args block) =
       gen = do
         emit $ QBasePointer bp
         genStmt (BStmt block)
-      vars = map (\((Arg t ident), i) -> insertVar ident (Stack $ toInteger i) t)
+      vars = map (\(Arg t ident, i) -> insertVar ident (Stack $ toInteger i) t)
         $ zip args [2..length args + 1]
       env = foldr (.) id vars $ newEnv bp
       state = newState
-      (_, output) = evalRWS gen env state
-    in QFunDef ident fntype output
+      (s, output) = execRWS gen env state
+    in QFunDef ident fntype output (- stackOffset s)
+
+genProgram :: Program -> [QFunDef]
+genProgram (Program topdefs) = map genFun topdefs

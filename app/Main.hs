@@ -5,6 +5,15 @@ import System.Environment ( getArgs, getProgName )
 import System.Exit ( exitFailure, exitSuccess )
 
 import Frontend
+import IR
+
+
+genIR p = do
+  let l = genProgram p
+  let out = unlines $ map show l
+  putStrLn out
+  return l
+
 
 process :: String -> IO ()
 process s = case getRepr s of
@@ -13,7 +22,8 @@ process s = case getRepr s of
             putStrLn e
             exitFailure
           Right tree -> do
-            print (tree::Program)
+            print tree
+            genIR tree
             exitSuccess
 
 

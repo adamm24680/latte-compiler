@@ -10,13 +10,19 @@ maintainer:          example@example.com
 copyright:           2016 Author name here
 category:            Web
 build-type:          Simple
-extra-source-files:  README.md
+extra-source-files:  {}
 cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
                      , grammar
   exposed-modules:     Frontend
+                     , IR
+                     , AbsLatte
+                     , ErrM
+                     , LexLatte
+                     , ParLatte
+                     , PrintLatte
   build-depends:       base >= 4.7 && < 5
                      , array
                      , mtl

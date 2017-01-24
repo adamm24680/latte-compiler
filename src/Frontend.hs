@@ -11,7 +11,7 @@ import Control.Monad
 
 data FunType = FunType Type [Type] deriving (Eq)
 
-type VarContext = Map.Map Ident Type
+type VarContext = Map.Map Ident (Type, Bool)
 type FunContext = Map.Map Ident FunType
 type Env = (FunContext, [VarContext])
 
@@ -26,7 +26,7 @@ checkVarBlockDecl (_, h:t) ident =
   case Map.lookup ident h of
     Just _ -> True
     Nothing -> False
-getVarType :: Env -> Ident -> Err Type
+getVarType :: Env -> Ident -> Err (Type, Bool)
 getVarType (_, ctx) ident =
   fnd ctx where
     fnd l = case l of
@@ -39,7 +39,7 @@ getFunType (ctx, _) ident =
   case Map.lookup ident ctx of
     Just x -> return x
     Nothing -> fail $ "undeclared function " ++ show ident
-updateVarType :: Env -> Ident -> Type -> Err Env
+updateVarType :: Env -> Ident -> (Type, Bool) -> Err Env
 updateVarType (x, t:tt) ident typ =
   return (x, Map.insert ident typ t : tt)
 updateFunType :: Env -> Ident -> FunType -> Err Env
@@ -70,11 +70,11 @@ checkExpr env typ expr = do
     fail $
       "type of " ++
         printTree expr ++
-          "expected " ++ printTree typ ++ "but found " ++ printTree typ2
+          " expected " ++ printTree typ ++ " but found " ++ printTree typ2
 
 inferExpr :: Env -> Expr -> Err Type
 inferExpr env x = case x of
-  EVar ident -> getVarType env ident
+  EVar ident -> fmap fst $ getVarType env ident
   ELitInt integer -> return Int
   ELitTrue -> return Bool
   ELitFalse -> return Bool
@@ -88,23 +88,17 @@ inferExpr env x = case x of
   EString string -> return Str
   Neg expr -> checkExpr env Int expr >> return Int
   Not expr -> checkExpr env Bool expr >> return Bool
-  EMul expr1 mulop expr2 -> do
-    checkExpr env Int expr1
-    checkExpr env Int expr2
-    return Int
-  EAdd expr1 addop expr2 -> do
-    checkExpr env Int expr1
-    checkExpr env Int expr2
-    return Int
-  ERel expr1 relop expr2 -> do
-    checkExpr env Int expr1
-    checkExpr env Int expr2
-    return Bool
-  EAnd expr1 expr2 -> do
-    checkExpr env Bool expr1
-    checkExpr env Bool expr2
-    return Bool
+  EMul expr1 mulop expr2 ->
+    checkTwo Int expr1 expr2 >> return Int
+  EAdd expr1 addop expr2 ->
+    checkTwo Int expr1 expr2 >> return Int
+  ERel expr1 relop expr2 ->
+    checkTwo Int expr1 expr2 >> return Bool
+  EAnd expr1 expr2 ->
+    checkTwo Bool expr1 expr2 >> return Bool
   EOr expr1 expr2 -> inferExpr env (EAnd expr1 expr2)
+  where {checkTwo type_ expr1 expr2 =
+    checkExpr env type_ expr1 >> checkExpr env type_ expr2}
 
 checkStmts :: Env -> Type -> [Stmt] -> Err Env
 checkStmts env rettype =
@@ -121,18 +115,30 @@ checkStmt env rettype x = case x of
       NoInit ident -> do
         when (checkVarBlockDecl env ident)
           (fail $ "variable " ++ show ident ++ "redeclared in " ++ printTree x)
-        updateVarType env1 ident type_
+        updateVarType env1 ident (type_, False)
       Init ident expr -> do
         when (checkVarBlockDecl env ident)
           (fail $ "variable " ++ show ident ++ "redeclared in " ++ printTree x)
         checkExpr env type_ expr
-        updateVarType env1 ident type_}
+        updateVarType env1 ident (type_, False)}
   Ass ident expr -> do
-    typ <- inferExpr env (EVar ident)
-    checkExpr env typ expr
+    (type_, ro) <- getVarType env ident
+    when ro $ fail ("parameter " ++ show ident ++ " modified in " ++
+      printTree (Ass ident expr))
+    checkExpr env type_ expr
     return env
-  Incr ident -> checkExpr env Int (EVar ident) >> return env
-  Decr ident -> checkExpr env Int (EVar ident) >> return env
+  Incr ident -> do
+    (_, ro) <- getVarType env ident
+    when ro $ fail ("parameter " ++ show ident ++ " modified in " ++
+      printTree (Incr ident))
+    checkExpr env Int (EVar ident)
+    return env
+  Decr ident -> do
+    (_, ro) <- getVarType env ident
+    when ro $ fail ("parameter " ++ show ident ++ " modified in " ++
+      printTree (Incr ident))
+    checkExpr env Int (EVar ident)
+    return env
   Ret expr -> checkExpr env rettype expr >> return env
   VRet -> unless (rettype == Void) (fail "return value needed") >> return env
   Cond expr stmt -> do
@@ -158,11 +164,12 @@ checkTopDef env (FnDef type_ ident args block)  = do
   let {insertArg env1 (Arg type1 ident1) = do
     when (checkVarBlockDecl env1 ident1)
       (fail $ "parameter " ++ show ident1 ++ "redeclared in function definition for " ++ show ident)
-    updateVarType env1 ident1 type1}
+    updateVarType env1 ident1 (type1, True)}
   env2 <- foldM insertArg env args
   let (Block stmts) = block
   void $ checkStmts env2 type_ stmts
 
+checkProgram :: Program -> Err Program
 checkProgram (Program topdefs) = do
   env1 <- foldM declTopDef emptyEnv topdefs
   let checked = map (checkTopDef env1) topdefs
@@ -173,13 +180,16 @@ checkProgram (Program topdefs) = do
     in fail $ foldl append "" checked
   else do
     mainType <- getFunType env1 (Ident "main")
-    when (mainType /= FunType Void [])
-      (fail  "main function has wrong type (should be void())")
-    return ()
+    when (mainType /= FunType Int [])
+      (fail  "main function has wrong type (should be int())")
+    return $ Program topdefs
 
 
 parse :: String -> Err Program
 parse = pProgram . myLexer
 
-getRepr:: Show a => String -> Either String a
-getRepr = undefined
+getRepr:: String -> Either String Program
+getRepr s =
+  case parse s >>= checkProgram of
+    Bad e -> Left e
+    Ok p -> Right p
