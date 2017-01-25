@@ -23,6 +23,8 @@ instance PrintfArg Operand where
     Reg s -> showString s
     Phi s -> showString s
 
+printIdent (Ident ident) = ident
+
 data BinOp = QAdd | QSub | QMul | QDiv | QMod
 instance PrintfArg BinOp where
   formatArg x _ = showString $ case x of
@@ -45,7 +47,7 @@ instance PrintfArg CompOp where
 newtype Label = Label String deriving (Show, Eq, Ord)
 instance PrintfArg Label where
    formatArg (Label s) _ = showString s
-data VarLoc = Stack | Param
+data VarLoc = Stack | Param Operand
 
 
 data Quadruple where
@@ -65,7 +67,7 @@ data Quadruple where
   QCall :: Operand -> Ident -> Quadruple
   QCallExternal :: Operand -> String -> Quadruple
   QLabel :: Label -> Quadruple
-  QPhi :: Operand -> Operand -> Operand -> Quadruple
+  QPhi :: Operand -> [Operand]-> Quadruple
   QVRet :: Quadruple
   QRet :: Operand -> Quadruple
   QBasePointer :: Operand -> Quadruple
@@ -88,12 +90,12 @@ instance Show Quadruple where
      QParam r -> printf "  param %s" r
      QCall d l -> printf "  %s = call %s" d (show l)
      QCallExternal d l -> printf "  %s = call external %s" d l
-     QPhi d s1 s2 -> printf "  %s = phi(%s, %s)" d s1 s2
+     QPhi d args -> printf "  %s = phi%s" d $ show args
      QVRet -> "  ret"
      QRet r -> printf "  ret %s" r
      QBasePointer d -> printf "  %s = gen bp" d
      QLabel l -> printf "%s:" l
-     QLitInt d i -> printf "%s = %i" d i
+     QLitInt d i -> printf "  %s = %i" d i
 -------------------------------------------------------------
 ---------- SSA CONSTRUCTION ZONE--------------------------------
 ------------------------------------------------------------
@@ -103,9 +105,7 @@ data BlockStruct = BlockStruct {preds :: [Label], isSealed :: Bool}
 newBlockStruct = BlockStruct {preds = [], isSealed = False}
 
 data GenState = GenState {
-  labelCounter :: Integer,
-  regCounter:: Integer,
-  phiCounter :: Integer ,
+  counter :: Integer,
   stackOffset :: Integer,
   currentBlock :: Label,
   phiInfo :: Map.Map Operand PhiStruct,
@@ -114,29 +114,47 @@ data GenState = GenState {
   incompletePhis :: Map.Map Label [(Ident, Operand)]
   }
 
+getPhiOperands :: Operand -> GenState -> [Operand]
+getPhiOperands phi state =
+  case Map.lookup phi $ phiInfo state of
+    Just phistruct -> operands phistruct
+    Nothing -> []
+
 newState :: GenState
 newState =
-  GenState {labelCounter = 0, regCounter = 0,
-  stackOffset = 0, phiCounter=0, currentBlock = Label "",
+  GenState { counter = 0,
+  stackOffset = 0, currentBlock = Label "",
   currentDef = Map.empty, phiInfo = Map.empty, blockInfo = Map.empty,
   incompletePhis = Map.empty}
+
+freshNumber :: GenM Integer
+freshNumber = do
+  state <- get
+  let number = counter state
+  put state{counter = number + 1}
+  return number
 
 newPhi :: Label -> GenM Operand
 newPhi block = do
   state <- get
-  let number = phiCounter state
+  number <- freshNumber
   let op = Phi ("phi" ++ show number)
   let phistruct = PhiStruct {operands = [], block = block}
   let newInfo = Map.insert op phistruct $ phiInfo state
-  put state{phiCounter = number+1, phiInfo=newInfo}
+  put state{phiInfo=newInfo}
   return op
+
+getCurrentBlock :: GenM Label
+getCurrentBlock = do
+  state <- get
+  return $ currentBlock state
 
 getPhiInfo :: Operand -> GenM PhiStruct
 getPhiInfo phi = do
   state <- get
   case Map.lookup phi $ phiInfo state of
     Just x -> return x
-    Nothing -> fail "internal error in ssa construction"
+    Nothing -> fail "internal error in ssa construction (getPhiInfo)"
 
 insertPhiInfo :: Operand -> PhiStruct -> GenM ()
 insertPhiInfo phi phistruct =
@@ -147,7 +165,7 @@ getBlockInfo label = do
   state <- get
   case Map.lookup label $ blockInfo state of
     Just x -> return x
-    Nothing -> fail "internal error in ssa construction"
+    Nothing -> fail "internal error in ssa construction (getBlockInfo)"
 
 insertBlockInfo :: Label -> BlockStruct -> GenM ()
 insertBlockInfo block blockstruct =
@@ -227,6 +245,7 @@ addPhiOperands variable phi = do
     appendOperand phi val}
   mapM_ appOp $ preds blockstruct
   tryRemoveTrivialPhi phi
+  return phi
 
 tryRemoveTrivialPhi :: Operand -> GenM Operand
 tryRemoveTrivialPhi phi = do
@@ -251,6 +270,12 @@ sealBlock block = do
   blockstruct <- getBlockInfo block
   insertBlockInfo block $ blockstruct{isSealed = True}
 
+addPred :: Label -> GenM ()
+addPred source = do
+  target <- getCurrentBlock
+  blockstruct <- getBlockInfo target
+  insertBlockInfo target blockstruct{preds = source : preds blockstruct}
+
 --------------------------------------------------
 ---------------------------------------------------------------
 
@@ -263,45 +288,56 @@ emitQPhiPlaceholder phi = do
 loadVar :: Ident -> GenM Operand
 loadVar ident = do
   loc <- getVarLoc ident
+  unique <- getVarUniqueIdent ident
   case loc of
     Stack -> do
-      state <- get
-      val <- readVariable ident $ currentBlock state
+      curB <- getCurrentBlock
+      val <- readVariable unique curB
       case val of
         Undef -> fail "internal error during SSA construction (undef)"
         Reg _ -> return val
         Phi _ -> emitQPhiPlaceholder val
+    Param r -> return r
 
 storeVar :: Ident -> Operand -> GenM ()
 storeVar ident reg = do
   loc <- getVarLoc ident
+  unique <- getVarUniqueIdent ident
   case loc of
     Stack -> do
-      state <- get
-      writeVariable ident (currentBlock state) reg
+      curB <- getCurrentBlock
+      writeVariable unique curB reg
 
 data GenEnv = GenEnv {
-  varInfo :: Map.Map Ident (VarLoc, Type),
+  varInfo :: Map.Map Ident (VarLoc, Type, Ident),
   basePointer :: Operand }
 
 type GenM a = RWS GenEnv [Quadruple] GenState a
 
 
-newEnv :: Operand -> GenEnv
-newEnv bp =
-  GenEnv {basePointer = bp, varInfo = Map.empty}
+newEnv :: GenEnv
+newEnv =
+  GenEnv {basePointer = Reg "", varInfo = Map.empty}
 
 getVarLoc :: Ident -> GenM VarLoc
 getVarLoc ident = do
   env <- ask
   case Map.lookup ident (varInfo env) of
-    Just (loc, _) -> return loc
-    Nothing -> fail "error variable not found"
+    Just (loc, _, _) -> return loc
+    Nothing -> fail $ "error variable "++ show ident ++" not found"
 
-insertVar ::  Ident -> VarLoc -> Type -> GenEnv -> GenEnv
-insertVar ident varloc type_ env =
-  env{varInfo = Map.insert ident (varloc, type_) (varInfo env)}
+getVarUniqueIdent :: Ident -> GenM Ident
+getVarUniqueIdent ident = do
+  env <- ask
+  case Map.lookup ident (varInfo env) of
+    Just (_, _, un) -> return un
+    Nothing -> fail $ "error variable "++ show ident ++" not found"
 
+insertVar ::  Ident -> VarLoc -> Type -> GenM GenEnv
+insertVar ident varloc type_ = do
+  env <- ask
+  unique <- newUniqueIdent ident
+  return env{varInfo = Map.insert ident (varloc, type_, unique) (varInfo env)}
 
 emit :: Quadruple -> GenM ()
 emit a = tell [a]
@@ -323,10 +359,11 @@ emitOr r1 r2 = do
   tell [QOr dest r1 r2]
   return dest
 
-emitPhi r1 r2 = do
+emitPhi args = do
   dest <- newReg
-  tell [QPhi dest r1 r2]
+  tell [QPhi dest args]
   return dest
+
 
 emitUn :: (Operand -> Operand -> Quadruple) -> Operand -> GenM Operand
 emitUn con r = do
@@ -364,36 +401,32 @@ emitLitInt i = do
 
 newReg :: GenM Operand
 newReg = do
-  state <- get
-  let number = regCounter state
-  put state{regCounter = number+1}
+  number <- freshNumber
   return $ Reg ("r" ++ show number)
 
 newLabel :: GenM Label
 newLabel = do
-  state <- get
-  let number = labelCounter state
-  put state{labelCounter = number+1}
+  number <- freshNumber
   return $ Label ("l" ++ show number)
 
+newUniqueIdent :: Ident -> GenM Ident
+newUniqueIdent (Ident ident) = do
+  number <- freshNumber
+  return $ Ident ("~" ++ show number ++ "~" ++ ident)
 
-getAddr :: Ident -> GenM Operand
-getAddr ident = do
-  varloc <- getVarLoc ident
-  emitLoadAddress varloc
-
-genDecl :: Type -> Item -> GenM GenEnv
-genDecl type_ item = do
-  env <- ask
-  loc <- getStackLocation
-  case item of
-    NoInit ident ->
-      return $ insertVar ident loc type_ env
-    Init ident expr -> do
-      reg <- emitLoadAddress loc
-      e <- genExpr expr
-      emit $ QStore reg e
-      return $ insertVar ident loc type_ env
+genDecl :: Type -> VarLoc -> Item ->GenM GenEnv
+genDecl type_ loc item = do
+  let {(e,ident) = case item of
+    NoInit ident -> (default_ type_, ident)
+    Init ident expr -> (expr, ident)}
+  r <- genExpr e
+  newEnv <- insertVar ident loc type_
+  local (const newEnv) $ storeVar ident r
+  return newEnv
+  where {default_ type_ = case type_ of
+    Int -> ELitInt 0
+    Bool -> ELitFalse
+    Str -> EString ""}
 
 
 genExpr :: Expr -> GenM Operand
@@ -452,25 +485,37 @@ genExpr x = case x of
       e2 <- genExpr expr2
       emitBin QCompOp op e1 e2
   EAnd expr1 expr2 -> do
+    curB <- getCurrentBlock
     e1 <- genExpr expr1
     [l1, l2] <- replicateM 2 newLabel
     emit $ QGotoBool e1 l1 l2
     enterBlock l1
+    addPred curB
+    sealBlock l1
     e2 <- genExpr expr2
     e3 <- emitAnd e1 e2
     emit $ QGoto l2
     enterBlock l2
-    emitPhi e1 e2
+    addPred l1
+    addPred curB
+    sealBlock l2
+    emitPhi [e1,e2]
   EOr expr1 expr2 -> do
+    curB <- getCurrentBlock
     e1 <- genExpr expr1
     [l1, l2] <- replicateM 2 newLabel
     emit $ QGotoBool e1 l2 l1
     enterBlock l1
+    addPred curB
+    sealBlock l1
     e2 <- genExpr expr2
     e3 <- emitAnd e1 e2
     emit $ QGoto l2
+    addPred curB
+    addPred l1
     enterBlock l2
-    emitPhi e1 e2
+    sealBlock l2
+    emitPhi [e1, e2]
 
 genStmts :: [Stmt] -> GenM ()
 genStmts l =
@@ -480,12 +525,12 @@ genStmts l =
       local (const env) $ genStmts t
     [] -> return ()
 
-genDecls :: Type -> [Item] -> GenM GenEnv
-genDecls type_ l =
+genDecls :: Type -> VarLoc -> [Item] -> GenM GenEnv
+genDecls type_ loc l  =
   case l of
     h:t -> do
-      env <- genDecl type_ h
-      local (const env) $ genDecls type_ t
+      env <- genDecl type_ loc h
+      local (const env) $ genDecls type_ loc t
     [] -> ask
 
 genStmt :: Stmt -> GenM GenEnv
@@ -494,14 +539,13 @@ genStmt x = case x of
   BStmt (Block stmts) -> do
     genStmts stmts
     ask
-  Decl type_ items -> genDecls type_ items
+  Decl type_ items -> genDecls type_ Stack items
   Ass ident expr -> do
     e <- genExpr expr
     storeVar ident e
     ask
   Incr ident -> do
     val <- loadVar ident
-    val <- emitUn QLoad reg
     inc <- emitLitInt 1
     res <- emitBin QBinOp QAdd val inc
     storeVar ident res
@@ -515,35 +559,56 @@ genStmt x = case x of
   Ret expr -> genExpr expr >>= (emit . QRet) >> ask
   VRet -> emit QVRet >> ask
   Cond expr stmt -> do
+    curB <- getCurrentBlock
     [l1, l2] <- replicateM 2 newLabel
     e <- genExpr expr
     emit $ QGotoBool e l1 l2
     enterBlock l1
+    addPred curB
+    sealBlock l1
     genStmt stmt
     emit $ QGoto l2
     enterBlock l2
+    addPred curB
+    addPred l1
+    sealBlock l2
     ask
   CondElse expr stmt1 stmt2 -> do
+    curB <- getCurrentBlock
     [l1, l2, l3] <- replicateM 3 newLabel
     e <- genExpr expr
     emit $ QGotoBool e l1 l2
     enterBlock l1
+    addPred curB
+    sealBlock l1
     genStmt stmt1
     emit $ QGoto l3
     enterBlock l2
+    addPred curB
+    sealBlock l2
     genStmt stmt2
     emit $ QGoto l3
     enterBlock l3
+    addPred l1
+    addPred l2
+    sealBlock l3
     ask
   While expr stmt -> do
+    curB <- getCurrentBlock
     [l1, l2] <- replicateM 2 newLabel
     e1 <- genExpr expr
     emit $ QGotoBool e1 l1 l2
     enterBlock l1
+    addPred curB
+    addPred l1
     genStmt stmt
     e2 <- genExpr expr
     emit $ QGotoBool e2 l1 l2
+    sealBlock l1
     enterBlock l2
+    addPred l1
+    addPred curB
+    sealBlock l2
     ask
   SExp expr -> do
     genExpr expr
@@ -555,20 +620,47 @@ instance Show QFunDef where
   show (QFunDef (Ident ident) type_ quads _) =
     printf "function %s {\n%s}" ident $ unlines (map show quads)
 
+genParams :: [Arg] -> GenM GenEnv
+genParams [] = ask
+genParams (Arg type_ ident : t) = do
+  env <- insertVar ident (Param $ Reg ("~" ++ printIdent ident)) type_
+  local (const env) $ genParams t
+
 genFun :: TopDef -> QFunDef
 genFun (FnDef type_ ident args block) =
   let fntype = Fun type_ (map (\(Arg t _) -> t) args)
       bp = Reg "bp"
       gen = do
-        enterBlock (Label "entry")
+        let entryBlock = Label "entry"
+        enterBlock entryBlock
+        sealBlock entryBlock
         emit $ QBasePointer bp
         genStmt (BStmt block)
-      vars = map (\(Arg t ident, i) -> insertVar ident (Stack $ toInteger i) t)
-        $ zip args [2..length args + 1]
-      env = foldr (.) id vars $ newEnv bp
+      withParams = do
+        env <- genParams args
+        local (const env) gen
       state = newState
-      (s, output) = execRWS gen env state
-    in QFunDef ident fntype output (- stackOffset s)
+      (s, output) = execRWS withParams newEnv state
+      rewritten = rewritePlaceholders s output Map.empty []
+    in QFunDef ident fntype rewritten (- stackOffset s)
 
 genProgram :: Program -> [QFunDef]
 genProgram (Program topdefs) = map genFun topdefs
+
+
+
+rewritePlaceholders :: GenState -> [Quadruple] -> Map.Map Operand Operand ->
+  [Quadruple] -> [Quadruple]
+rewritePlaceholders state input regmap output =
+  case input of
+    QPhiPlaceholder reg phi : t ->
+      let (newq , newregmap) = rewrite reg phi
+      in rewritePlaceholders state t newregmap (newq:output)
+    h:t -> rewritePlaceholders state t regmap (h:output)
+    [] -> reverse output
+  where
+    rewrite reg phi = case Map.lookup phi regmap of
+      Just reg2 -> (QCopy reg reg2, regmap)
+      Nothing ->
+        let ops = getPhiOperands phi state
+        in (QPhi reg ops, Map.insert phi reg regmap)
