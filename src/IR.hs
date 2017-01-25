@@ -12,7 +12,8 @@ import Control.Monad.RWS
 import Text.Printf
 
 
-data Operand = Reg String | Phi String
+data Operand = Reg String | Phi String | Undef
+  deriving (Ord, Eq)
 
 instance Show Operand where
   show (Reg i) = i
@@ -41,10 +42,10 @@ instance PrintfArg CompOp where
     IR.NE -> "!="
 
 
-newtype Label = Label String deriving (Show)
+newtype Label = Label String deriving (Show, Eq, Ord)
 instance PrintfArg Label where
    formatArg (Label s) _ = showString s
-data VarLoc = Stack Integer
+data VarLoc = Stack | Param
 
 
 data Quadruple where
@@ -69,6 +70,7 @@ data Quadruple where
   QRet :: Operand -> Quadruple
   QBasePointer :: Operand -> Quadruple
   QLitInt :: Operand -> Integer -> Quadruple
+  QPhiPlaceholder :: Operand -> Operand -> Quadruple
 
 instance Show Quadruple where
    show x = case x of
@@ -92,21 +94,191 @@ instance Show Quadruple where
      QBasePointer d -> printf "  %s = gen bp" d
      QLabel l -> printf "%s:" l
      QLitInt d i -> printf "%s = %i" d i
-
+-------------------------------------------------------------
+---------- SSA CONSTRUCTION ZONE--------------------------------
+------------------------------------------------------------
 data PhiStruct = PhiStruct {operands :: [Operand], block :: Label}
-newPhiStruct block = PhiStruct {operands = [], block = block}
 
 data BlockStruct = BlockStruct {preds :: [Label], isSealed :: Bool}
 newBlockStruct = BlockStruct {preds = [], isSealed = False}
 
 data GenState = GenState {
-  phiInfo :: Map.Map Operand PhiStruct,
   labelCounter :: Integer,
   regCounter:: Integer,
   phiCounter :: Integer ,
   stackOffset :: Integer,
-  currentBlock :: Label
+  currentBlock :: Label,
+  phiInfo :: Map.Map Operand PhiStruct,
+  blockInfo :: Map.Map Label BlockStruct,
+  currentDef :: Map.Map (Ident, Label) Operand,
+  incompletePhis :: Map.Map Label [(Ident, Operand)]
   }
+
+newState :: GenState
+newState =
+  GenState {labelCounter = 0, regCounter = 0,
+  stackOffset = 0, phiCounter=0, currentBlock = Label "",
+  currentDef = Map.empty, phiInfo = Map.empty, blockInfo = Map.empty,
+  incompletePhis = Map.empty}
+
+newPhi :: Label -> GenM Operand
+newPhi block = do
+  state <- get
+  let number = phiCounter state
+  let op = Phi ("phi" ++ show number)
+  let phistruct = PhiStruct {operands = [], block = block}
+  let newInfo = Map.insert op phistruct $ phiInfo state
+  put state{phiCounter = number+1, phiInfo=newInfo}
+  return op
+
+getPhiInfo :: Operand -> GenM PhiStruct
+getPhiInfo phi = do
+  state <- get
+  case Map.lookup phi $ phiInfo state of
+    Just x -> return x
+    Nothing -> fail "internal error in ssa construction"
+
+insertPhiInfo :: Operand -> PhiStruct -> GenM ()
+insertPhiInfo phi phistruct =
+  modify $ \s -> s {phiInfo = Map.insert phi phistruct $ phiInfo s}
+
+getBlockInfo :: Label -> GenM BlockStruct
+getBlockInfo label = do
+  state <- get
+  case Map.lookup label $ blockInfo state of
+    Just x -> return x
+    Nothing -> fail "internal error in ssa construction"
+
+insertBlockInfo :: Label -> BlockStruct -> GenM ()
+insertBlockInfo block blockstruct =
+  modify $ \s -> s {blockInfo = Map.insert block blockstruct $ blockInfo s}
+
+enterBlock :: Label -> GenM ()
+enterBlock l = do
+  modify (\s -> s{currentBlock = l,
+    blockInfo = Map.insert l newBlockStruct $ blockInfo s})
+  emit $ QLabel l
+
+getIncompletePhis :: Label -> GenM [(Ident, Operand)]
+getIncompletePhis block = do
+  s <- get
+  return $ Map.findWithDefault [] block (incompletePhis s)
+
+insertIncompletePhi :: Label -> Ident -> Operand -> GenM ()
+insertIncompletePhi block variable value = do
+  list <- getIncompletePhis block
+  let newlist = (variable, value):list
+  modify (\s -> s {incompletePhis = Map.insert block newlist $ incompletePhis s})
+
+appendOperand :: Operand -> Operand -> GenM ()
+appendOperand phi op = do
+  phistruct <- getPhiInfo phi
+  insertPhiInfo phi $ phistruct{operands = op:operands phistruct}
+
+getPhiUsers :: Operand -> GenM [Operand]
+getPhiUsers phi = do
+  state <- get
+  let flt phistruct = elem phi $ operands phistruct
+  return $ filter (phi /=) (Map.keys $ Map.filter flt (phiInfo state))
+
+replacePhiUses :: Operand -> Operand -> GenM ()
+replacePhiUses phi new = do
+  let {rmstr phistruct =
+    phistruct {operands = new : filter (\x -> x /= phi && x /= new) (operands phistruct)}}
+  modify (\s -> s{phiInfo = Map.delete phi . Map.map rmstr . phiInfo $ s  })
+
+----------------------------------------------------
+writeVariable :: Ident -> Label -> Operand -> GenM ()
+writeVariable variable block value =
+  modify (\s -> s{currentDef = Map.insert (variable, block) value $ currentDef s})
+
+readVariable :: Ident -> Label -> GenM Operand
+readVariable variable block = do
+  state <- get
+  case Map.lookup (variable, block) (currentDef state) of
+    Just x -> return x
+    Nothing -> readVariableRecursive variable block
+
+readVariableRecursive :: Ident -> Label -> GenM Operand
+readVariableRecursive variable block = do
+  state <- get
+  blockstruct <- getBlockInfo block
+  let {gn
+    | not . isSealed $ blockstruct =
+      do val <- newPhi block
+         insertIncompletePhi block variable val
+         return val
+    | 1 == (length . preds $ blockstruct) =
+      readVariable variable $ head (preds blockstruct)
+    | otherwise =
+      do val <- newPhi block
+         writeVariable variable block val
+         addPhiOperands variable val}
+  val <- gn
+  writeVariable variable block val
+  return val
+
+addPhiOperands :: Ident -> Operand -> GenM Operand
+addPhiOperands variable phi = do
+  phistruct <- getPhiInfo phi
+  blockstruct <- getBlockInfo $ block phistruct
+  let {appOp block = do
+    val <- readVariable variable block
+    appendOperand phi val}
+  mapM_ appOp $ preds blockstruct
+  tryRemoveTrivialPhi phi
+
+tryRemoveTrivialPhi :: Operand -> GenM Operand
+tryRemoveTrivialPhi phi = do
+  phistruct <- getPhiInfo phi
+  let ops = filter (phi /=) $ operands phistruct
+  if ops /= [] && any (head ops /=) ops then
+    insertPhiInfo phi phistruct{operands=ops} >> return phi
+  else do
+    insertPhiInfo phi phistruct{operands=ops}
+    let {same = if null . operands $ phistruct then Undef
+      else head . operands $phistruct}
+    users <- getPhiUsers phi
+    replacePhiUses phi same
+    mapM_ tryRemoveTrivialPhi users
+    return same
+
+
+sealBlock :: Label -> GenM ()
+sealBlock block = do
+  lst <- getIncompletePhis block
+  mapM_ (uncurry addPhiOperands) lst
+  blockstruct <- getBlockInfo block
+  insertBlockInfo block $ blockstruct{isSealed = True}
+
+--------------------------------------------------
+---------------------------------------------------------------
+
+emitQPhiPlaceholder :: Operand -> GenM Operand
+emitQPhiPlaceholder phi = do
+  dest <- newReg
+  emit $ QPhiPlaceholder dest phi
+  return dest
+
+loadVar :: Ident -> GenM Operand
+loadVar ident = do
+  loc <- getVarLoc ident
+  case loc of
+    Stack -> do
+      state <- get
+      val <- readVariable ident $ currentBlock state
+      case val of
+        Undef -> fail "internal error during SSA construction (undef)"
+        Reg _ -> return val
+        Phi _ -> emitQPhiPlaceholder val
+
+storeVar :: Ident -> Operand -> GenM ()
+storeVar ident reg = do
+  loc <- getVarLoc ident
+  case loc of
+    Stack -> do
+      state <- get
+      writeVariable ident (currentBlock state) reg
 
 data GenEnv = GenEnv {
   varInfo :: Map.Map Ident (VarLoc, Type),
@@ -114,18 +286,6 @@ data GenEnv = GenEnv {
 
 type GenM a = RWS GenEnv [Quadruple] GenState a
 
-getStackLocation :: GenM VarLoc
-getStackLocation = do
-  state <- get
-  let offset = stackOffset state -1
-  put state{stackOffset = offset}
-  return $ Stack offset
-
-newState :: GenState
-newState =
-  GenState {labelCounter = 0, regCounter = 0,
-  stackOffset = 0, phiCounter=0,
-  phiInfo = Map.empty, currentBlock = Label ""}
 
 newEnv :: Operand -> GenEnv
 newEnv bp =
@@ -195,13 +355,6 @@ emitWrite base offset value = do
   dest <- emitBin QBinOp QSub base r
   emit $ QStore dest value
 
-emitLoadAddress :: VarLoc -> GenM Operand
-emitLoadAddress varloc = do
-  env <- ask
-  case varloc of
-    Stack offset -> do
-      r <- emitLitInt $ toInteger ((-4)*offset)
-      emitBin QBinOp QSub (basePointer env) r
 
 emitLitInt :: Integer -> GenM Operand
 emitLitInt i = do
@@ -223,17 +376,6 @@ newLabel = do
   put state{labelCounter = number+1}
   return $ Label ("l" ++ show number)
 
-newPhi :: GenM Operand
-newPhi = do
-  state <- get
-  let number = phiCounter state
-  put state{phiCounter = number+1}
-  return $ Phi ("phi" ++ show number)
-
-enterBlock :: Label -> GenM ()
-enterBlock l = do
-  modify (\s -> s{currentBlock = l})
-  emit $ QLabel l
 
 getAddr :: Ident -> GenM Operand
 getAddr ident = do
@@ -256,9 +398,8 @@ genDecl type_ item = do
 
 genExpr :: Expr -> GenM Operand
 genExpr x = case x of
-  EVar ident -> do
-    a <- getAddr ident
-    emitUn QLoad a
+  EVar ident ->
+    loadVar ident
   ELitInt integer -> emitLitInt integer
   ELitTrue -> emitLitInt 1
   ELitFalse -> emitLitInt 0
@@ -355,23 +496,21 @@ genStmt x = case x of
     ask
   Decl type_ items -> genDecls type_ items
   Ass ident expr -> do
-    reg <- getAddr ident
     e <- genExpr expr
-    emit $ QStore reg e
+    storeVar ident e
     ask
   Incr ident -> do
-    reg <- getAddr ident
+    val <- loadVar ident
     val <- emitUn QLoad reg
     inc <- emitLitInt 1
     res <- emitBin QBinOp QAdd val inc
-    emit $ QStore reg res
+    storeVar ident res
     ask
   Decr ident -> do
-    reg <- getAddr ident
-    val <- emitUn QLoad reg
+    val <- loadVar ident
     inc <- emitLitInt 1
     res <- emitBin QBinOp QSub val inc
-    emit $ QStore reg res
+    storeVar ident res
     ask
   Ret expr -> genExpr expr >>= (emit . QRet) >> ask
   VRet -> emit QVRet >> ask
