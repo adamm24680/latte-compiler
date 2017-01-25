@@ -244,13 +244,13 @@ addPhiOperands variable phi = do
     val <- readVariable variable block
     appendOperand phi val}
   mapM_ appOp $ preds blockstruct
-  --tryRemoveTrivialPhi phi
+  tryRemoveTrivialPhi phi
   return phi
 
 tryRemoveTrivialPhi :: Operand -> GenM Operand
 tryRemoveTrivialPhi phi = do
   phistruct <- getPhiInfo phi
-  let ops = filter (phi /=) $ operands phistruct 
+  let ops = filter (phi /=) $ operands phistruct
   if ops /= [] && any (head ops /=) ops then
     insertPhiInfo phi phistruct{operands=ops} >> return phi
   else do
