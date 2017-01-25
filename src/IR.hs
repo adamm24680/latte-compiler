@@ -118,7 +118,7 @@ getPhiOperands :: Operand -> GenState -> [Operand]
 getPhiOperands phi state =
   case Map.lookup phi $ phiInfo state of
     Just phistruct -> operands phistruct
-    Nothing -> []
+    Nothing -> fail "internal error during ssa construction (getPhiOperands)"
 
 newState :: GenState
 newState =
@@ -659,8 +659,11 @@ rewritePlaceholders state input regmap output =
     h:t -> rewritePlaceholders state t regmap (h:output)
     [] -> reverse output
   where
+    convOp op = case Map.lookup op regmap of
+      Just r -> r
+      Nothing -> op
     rewrite reg phi = case Map.lookup phi regmap of
       Just reg2 -> (QCopy reg reg2, regmap)
       Nothing ->
-        let ops = getPhiOperands phi state
+        let ops = map convOp  $ getPhiOperands phi state
         in (QPhi reg ops, Map.insert phi reg regmap)
