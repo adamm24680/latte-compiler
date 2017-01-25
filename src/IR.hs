@@ -380,6 +380,7 @@ genFun (FnDef type_ ident args block) =
   let fntype = Fun type_ (map (\(Arg t _) -> t) args)
       bp = Reg "bp"
       gen = do
+        emit $ QLabel (Label "entry")
         emit $ QBasePointer bp
         genStmt (BStmt block)
       vars = map (\(Arg t ident, i) -> insertVar ident (Stack $ toInteger i) t)
