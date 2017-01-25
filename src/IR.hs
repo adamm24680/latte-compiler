@@ -1,3 +1,5 @@
+{-# LANGUAGE GADTs #-}
+
 module IR
   (Operand, Label, Quadruple, BinOp, CompOp, QFunDef, genProgram)
   where
@@ -9,14 +11,16 @@ import Control.Monad
 import Control.Monad.RWS
 import Text.Printf
 
-data Operand = Reg String | LitInt Integer
+
+data Operand = Reg String | Phi String
+
 instance Show Operand where
   show (Reg i) = i
-  show (LitInt i) = show i
+  show (Phi i) = i
 instance PrintfArg Operand where
   formatArg x _ = case x of
     Reg s -> showString s
-    LitInt i -> shows i
+    Phi s -> showString s
 
 data BinOp = QAdd | QSub | QMul | QDiv | QMod
 instance PrintfArg BinOp where
@@ -42,27 +46,29 @@ instance PrintfArg Label where
    formatArg (Label s) _ = showString s
 data VarLoc = Stack Integer
 
-data Quadruple =
-  QBinOp Operand BinOp Operand Operand |
-  QCompOp Operand CompOp Operand Operand |
-  QAnd Operand Operand Operand |
-  QOr Operand Operand Operand |
-  QNeg Operand Operand |
-  QNot Operand Operand |
-  QLoad Operand Operand |
-  QStore Operand Operand |
-  QCopy Operand Operand |
-  QGoto Label |
+
+data Quadruple where
+  QBinOp :: Operand -> BinOp -> Operand -> Operand -> Quadruple
+  QCompOp :: Operand -> CompOp -> Operand -> Operand -> Quadruple
+  QAnd :: Operand -> Operand -> Operand -> Quadruple
+  QOr :: Operand -> Operand -> Operand -> Quadruple
+  QNeg :: Operand -> Operand -> Quadruple
+  QNot :: Operand -> Operand -> Quadruple
+  QLoad :: Operand -> Operand -> Quadruple
+  QStore :: Operand -> Operand -> Quadruple
+  QCopy :: Operand -> Operand -> Quadruple
+  QGoto :: Label -> Quadruple
   --QGotoComp Operand CompOp Operand Label Label |
-  QGotoBool Operand Label Label |
-  QParam Operand |
-  QCall Operand Ident |
-  QCallExternal Operand String |
-  QLabel Label |
-  QPhi Operand Operand Operand |
-  QVRet |
-  QRet Operand |
-  QBasePointer Operand
+  QGotoBool :: Operand -> Label -> Label -> Quadruple
+  QParam :: Operand -> Quadruple
+  QCall :: Operand -> Ident -> Quadruple
+  QCallExternal :: Operand -> String -> Quadruple
+  QLabel :: Label -> Quadruple
+  QPhi :: Operand -> Operand -> Operand -> Quadruple
+  QVRet :: Quadruple
+  QRet :: Operand -> Quadruple
+  QBasePointer :: Operand -> Quadruple
+  QLitInt :: Operand -> Integer -> Quadruple
 
 instance Show Quadruple where
    show x = case x of
@@ -85,11 +91,21 @@ instance Show Quadruple where
      QRet r -> printf "  ret %s" r
      QBasePointer d -> printf "  %s = gen bp" d
      QLabel l -> printf "%s:" l
+     QLitInt d i -> printf "%s = %i" d i
+
+data PhiStruct = PhiStruct {operands :: [Operand], block :: Label}
+newPhiStruct block = PhiStruct {operands = [], block = block}
+
+data BlockStruct = BlockStruct {preds :: [Label], isSealed :: Bool}
+newBlockStruct = BlockStruct {preds = [], isSealed = False}
 
 data GenState = GenState {
+  phiInfo :: Map.Map Operand PhiStruct,
   labelCounter :: Integer,
   regCounter:: Integer,
-  stackOffset :: Integer
+  phiCounter :: Integer ,
+  stackOffset :: Integer,
+  currentBlock :: Label
   }
 
 data GenEnv = GenEnv {
@@ -107,7 +123,9 @@ getStackLocation = do
 
 newState :: GenState
 newState =
-  GenState {labelCounter = 0, regCounter = 0, stackOffset = 0}
+  GenState {labelCounter = 0, regCounter = 0,
+  stackOffset = 0, phiCounter=0,
+  phiInfo = Map.empty, currentBlock = Label ""}
 
 newEnv :: Operand -> GenEnv
 newEnv bp =
@@ -173,17 +191,23 @@ emitCallExternal str = do
 
 emitWrite :: Operand -> Int -> Operand -> GenM ()
 emitWrite base offset value = do
-  dest <- emitBin QBinOp QSub base (LitInt . toInteger $((-4)*offset))
+  r <- emitLitInt $ toInteger ((-4)*offset)
+  dest <- emitBin QBinOp QSub base r
   emit $ QStore dest value
 
 emitLoadAddress :: VarLoc -> GenM Operand
 emitLoadAddress varloc = do
   env <- ask
   case varloc of
-    Stack offset ->
-      emitBin QBinOp QSub (basePointer env) (LitInt . toInteger $((-4)*offset))
+    Stack offset -> do
+      r <- emitLitInt $ toInteger ((-4)*offset)
+      emitBin QBinOp QSub (basePointer env) r
 
-
+emitLitInt :: Integer -> GenM Operand
+emitLitInt i = do
+  dest <- newReg
+  tell [QLitInt dest i]
+  return dest
 
 newReg :: GenM Operand
 newReg = do
@@ -198,6 +222,18 @@ newLabel = do
   let number = labelCounter state
   put state{labelCounter = number+1}
   return $ Label ("l" ++ show number)
+
+newPhi :: GenM Operand
+newPhi = do
+  state <- get
+  let number = phiCounter state
+  put state{phiCounter = number+1}
+  return $ Phi ("phi" ++ show number)
+
+enterBlock :: Label -> GenM ()
+enterBlock l = do
+  modify (\s -> s{currentBlock = l})
+  emit $ QLabel l
 
 getAddr :: Ident -> GenM Operand
 getAddr ident = do
@@ -223,18 +259,21 @@ genExpr x = case x of
   EVar ident -> do
     a <- getAddr ident
     emitUn QLoad a
-  ELitInt integer -> return $ LitInt integer
-  ELitTrue -> return $ LitInt 1
-  ELitFalse -> return $ LitInt 0
+  ELitInt integer -> emitLitInt integer
+  ELitTrue -> emitLitInt 1
+  ELitFalse -> emitLitInt 0
   EApp ident exprs -> do
     vs <- mapM genExpr exprs
     mapM_ emitParam vs
     emitCall ident
   EString string -> do
-    emitParam $ LitInt . toInteger $ (length string + 1)
-    emitParam $ LitInt 4
+    r1 <- emitLitInt $ toInteger (length string + 1)
+    r2 <- emitLitInt 4
+    emitParam r1
+    emitParam r2
     allocated <- emitCallExternal "calloc"
-    sequence_ [emitWrite allocated (offset-1) value | (offset, value) <- zip [1..(length string)] (map (LitInt . toInteger. fromEnum) string)]
+    values <- mapM (emitLitInt .toInteger. fromEnum) string
+    sequence_ [emitWrite allocated (offset-1) value | (offset, value) <- zip [1..(length string)] values]
     return allocated
   Neg expr -> do
     e <- genExpr expr
@@ -275,21 +314,21 @@ genExpr x = case x of
     e1 <- genExpr expr1
     [l1, l2] <- replicateM 2 newLabel
     emit $ QGotoBool e1 l1 l2
-    emit $ QLabel l1
+    enterBlock l1
     e2 <- genExpr expr2
     e3 <- emitAnd e1 e2
     emit $ QGoto l2
-    emit $ QLabel l2
+    enterBlock l2
     emitPhi e1 e2
   EOr expr1 expr2 -> do
     e1 <- genExpr expr1
     [l1, l2] <- replicateM 2 newLabel
     emit $ QGotoBool e1 l2 l1
-    emit $ QLabel l1
+    enterBlock l1
     e2 <- genExpr expr2
     e3 <- emitAnd e1 e2
     emit $ QGoto l2
-    emit $ QLabel l2
+    enterBlock l2
     emitPhi e1 e2
 
 genStmts :: [Stmt] -> GenM ()
@@ -323,13 +362,15 @@ genStmt x = case x of
   Incr ident -> do
     reg <- getAddr ident
     val <- emitUn QLoad reg
-    res <- emitBin QBinOp QAdd val (LitInt 1)
+    inc <- emitLitInt 1
+    res <- emitBin QBinOp QAdd val inc
     emit $ QStore reg res
     ask
   Decr ident -> do
     reg <- getAddr ident
     val <- emitUn QLoad reg
-    res <- emitBin QBinOp QAdd val (LitInt 1)
+    inc <- emitLitInt 1
+    res <- emitBin QBinOp QSub val inc
     emit $ QStore reg res
     ask
   Ret expr -> genExpr expr >>= (emit . QRet) >> ask
@@ -338,32 +379,32 @@ genStmt x = case x of
     [l1, l2] <- replicateM 2 newLabel
     e <- genExpr expr
     emit $ QGotoBool e l1 l2
-    emit $ QLabel l1
+    enterBlock l1
     genStmt stmt
     emit $ QGoto l2
-    emit $ QLabel l2
+    enterBlock l2
     ask
   CondElse expr stmt1 stmt2 -> do
     [l1, l2, l3] <- replicateM 3 newLabel
     e <- genExpr expr
     emit $ QGotoBool e l1 l2
-    emit $ QLabel l1
+    enterBlock l1
     genStmt stmt1
     emit $ QGoto l3
-    emit $ QLabel l2
+    enterBlock l2
     genStmt stmt2
     emit $ QGoto l3
-    emit $ QLabel l3
+    enterBlock l3
     ask
   While expr stmt -> do
     [l1, l2] <- replicateM 2 newLabel
     e1 <- genExpr expr
     emit $ QGotoBool e1 l1 l2
-    emit $ QLabel l1
+    enterBlock l1
     genStmt stmt
     e2 <- genExpr expr
     emit $ QGotoBool e2 l1 l2
-    emit $ QLabel l2
+    enterBlock l2
     ask
   SExp expr -> do
     genExpr expr
@@ -380,7 +421,7 @@ genFun (FnDef type_ ident args block) =
   let fntype = Fun type_ (map (\(Arg t _) -> t) args)
       bp = Reg "bp"
       gen = do
-        emit $ QLabel (Label "entry")
+        enterBlock (Label "entry")
         emit $ QBasePointer bp
         genStmt (BStmt block)
       vars = map (\(Arg t ident, i) -> insertVar ident (Stack $ toInteger i) t)
