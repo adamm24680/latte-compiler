@@ -40,7 +40,8 @@ instance PrintfArg CompOp where
 newtype Label = Label String deriving (Show)
 instance PrintfArg Label where
    formatArg (Label s) _ = showString s
-data VarLoc = Stack Integer
+
+data VarLoc = Stack Operand | Param Operand
 
 data Quadruple =
   QBinOp Operand BinOp Operand Operand |
@@ -62,7 +63,8 @@ data Quadruple =
   QPhi Operand Operand Operand |
   QVRet |
   QRet Operand |
-  QBasePointer Operand
+  QBasePointer Operand |
+  QAlloca Operand
 
 instance Show Quadruple where
    show x = case x of
@@ -88,8 +90,7 @@ instance Show Quadruple where
 
 data GenState = GenState {
   labelCounter :: Integer,
-  regCounter:: Integer,
-  stackOffset :: Integer
+  regCounter:: Integer
   }
 
 data GenEnv = GenEnv {
@@ -98,16 +99,9 @@ data GenEnv = GenEnv {
 
 type GenM a = RWS GenEnv [Quadruple] GenState a
 
-getStackLocation :: GenM VarLoc
-getStackLocation = do
-  state <- get
-  let offset = stackOffset state -1
-  put state{stackOffset = offset}
-  return $ Stack offset
-
 newState :: GenState
 newState =
-  GenState {labelCounter = 0, regCounter = 0, stackOffset = 0}
+  GenState {labelCounter = 0, regCounter = 0}
 
 newEnv :: Operand -> GenEnv
 newEnv bp =
@@ -176,14 +170,21 @@ emitWrite base offset value = do
   dest <- emitBin QBinOp QSub base (LitInt . toInteger $((-4)*offset))
   emit $ QStore dest value
 
-emitLoadAddress :: VarLoc -> GenM Operand
-emitLoadAddress varloc = do
-  env <- ask
-  case varloc of
-    Stack offset ->
-      emitBin QBinOp QSub (basePointer env) (LitInt . toInteger $((-4)*offset))
 
+emitLoad :: Operand -> GenM Operand
+emitLoad reg = do
+  new <- newReg
+  emit $ QLoad new reg
+  return new
 
+emitAlloca :: GenM Operand
+emitAlloca = do
+  new <- newReg
+  emit $ QAlloca new
+  return new
+
+emitStore :: Operand -> Operand -> GenM ()
+emitStore dest src = emit $ QStore dest src
 
 newReg :: GenM Operand
 newReg = do
@@ -199,30 +200,42 @@ newLabel = do
   put state{labelCounter = number+1}
   return $ Label ("l" ++ show number)
 
-getAddr :: Ident -> GenM Operand
-getAddr ident = do
-  varloc <- getVarLoc ident
-  emitLoadAddress varloc
+
+loadVar :: Ident -> GenM Operand
+loadVar ident = do
+  loc <- getVarLoc ident
+  case loc of
+    Stack reg -> emitLoad reg
+    Param reg -> return reg
+
+storeVar :: Ident -> Operand -> GenM()
+storeVar ident val = do
+  loc <- getVarLoc ident
+  case loc of
+    Stack reg -> emitStore reg val
+    Param _ -> fail "internal error: assignment to parameter"
+
 
 genDecl :: Type -> Item -> GenM GenEnv
 genDecl type_ item = do
   env <- ask
-  loc <- getStackLocation
-  case item of
-    NoInit ident ->
-      return $ insertVar ident loc type_ env
-    Init ident expr -> do
-      reg <- emitLoadAddress loc
-      e <- genExpr expr
-      emit $ QStore reg e
-      return $ insertVar ident loc type_ env
+  new <- emitAlloca
+  let loc = Stack new
+  let {(e, ident) = case item of
+    NoInit ident -> (default_ type_, ident)
+    Init ident expr -> (expr, ident)}
+  r <- genExpr e
+  emitStore new r
+  return $ insertVar ident loc type_ env
+  where {default_ t = case t of
+    Int -> ELitInt 0
+    Bool -> ELitFalse
+    Str -> EString ""}
 
 
 genExpr :: Expr -> GenM Operand
 genExpr x = case x of
-  EVar ident -> do
-    a <- getAddr ident
-    emitUn QLoad a
+  EVar ident -> loadVar ident
   ELitInt integer -> return $ LitInt integer
   ELitTrue -> return $ LitInt 1
   ELitFalse -> return $ LitInt 0
@@ -316,21 +329,18 @@ genStmt x = case x of
     ask
   Decl type_ items -> genDecls type_ items
   Ass ident expr -> do
-    reg <- getAddr ident
     e <- genExpr expr
-    emit $ QStore reg e
+    storeVar ident e
     ask
   Incr ident -> do
-    reg <- getAddr ident
-    val <- emitUn QLoad reg
+    val <- loadVar ident
     res <- emitBin QBinOp QAdd val (LitInt 1)
-    emit $ QStore reg res
+    storeVar ident res
     ask
   Decr ident -> do
-    reg <- getAddr ident
-    val <- emitUn QLoad reg
-    res <- emitBin QBinOp QAdd val (LitInt 1)
-    emit $ QStore reg res
+    val <- loadVar ident
+    res <- emitBin QBinOp QSub val (LitInt 1)
+    storeVar ident res
     ask
   Ret expr -> genExpr expr >>= (emit . QRet) >> ask
   VRet -> emit QVRet >> ask
@@ -383,12 +393,12 @@ genFun (FnDef type_ ident args block) =
         emit $ QLabel (Label "entry")
         emit $ QBasePointer bp
         genStmt (BStmt block)
-      vars = map (\(Arg t ident, i) -> insertVar ident (Stack $ toInteger i) t)
-        $ zip args [2..length args + 1]
+      vars = map (\(Arg t ident, i) -> insertVar ident (Param $ Reg ("~p"++show i)) t)
+        $ zip args [0..length args - 1]
       env = foldr (.) id vars $ newEnv bp
       state = newState
       (s, output) = execRWS gen env state
-    in QFunDef ident fntype output (- stackOffset s)
+    in QFunDef ident fntype output (toInteger . length $ args)
 
 genProgram :: Program -> [QFunDef]
 genProgram (Program topdefs) = map genFun topdefs
