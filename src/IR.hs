@@ -9,6 +9,9 @@ import Control.Monad
 import Control.Monad.RWS
 import Text.Printf
 
+instance PrintfArg Ident where
+  formatArg (Ident s) _ = showString s
+
 data Operand = Reg String | LitInt Integer
 instance Show Operand where
   show (Reg i) = i
@@ -95,7 +98,8 @@ data GenState = GenState {
   }
 
 data GenEnv = GenEnv {
-  varInfo :: Map.Map Ident (VarLoc, Type)}
+  varInfo :: Map.Map Ident (VarLoc, Type),
+  funInfo :: Map.Map Ident Type}
 
 type GenM a = RWS GenEnv [Quadruple] GenState a
 
@@ -105,14 +109,32 @@ newState =
 
 newEnv :: GenEnv
 newEnv =
-  GenEnv { varInfo = Map.empty}
+  GenEnv { varInfo = Map.empty, funInfo = Map.empty}
+
+insertFunType :: GenEnv -> (Ident, Type) -> GenEnv
+insertFunType env (ident, t) =
+  env{funInfo = Map.insert ident t $ funInfo env}
 
 getVarLoc :: Ident -> GenM VarLoc
 getVarLoc ident = do
   env <- ask
   case Map.lookup ident (varInfo env) of
     Just (loc, _) -> return loc
-    Nothing -> fail "error variable not found"
+    Nothing -> fail $ printf "internal error: variable %s not found" ident
+
+getVarType :: Ident -> GenM Type
+getVarType ident = do
+  env <- ask
+  case Map.lookup ident (varInfo env) of
+    Just (_, type_) -> return type_
+    Nothing -> fail $ printf "internal error: variable %s not found" ident
+
+getFunType :: Ident -> GenM Type
+getFunType ident = do
+  env <- ask
+  case Map.lookup ident $ funInfo env of
+    Just x -> return x
+    Nothing -> fail $ printf "internal error: function %s not found" ident
 
 insertVar ::  Ident -> VarLoc -> Type -> GenEnv -> GenEnv
 insertVar ident varloc type_ env =
@@ -235,6 +257,22 @@ genDecl type_ item = do
     Bool -> ELitFalse
     Str -> EString ""}
 
+inferExpr :: Expr -> GenM Type
+inferExpr x = case x of
+  EVar ident -> getVarType ident
+  ELitInt integer -> return Int
+  ELitTrue -> return Bool
+  ELitFalse -> return Bool
+  EApp ident exprs ->
+    getFunType ident >>= (\(Fun t _) -> return t)
+  EString string -> return Str
+  Neg expr -> return Int
+  Not expr -> return Bool
+  EMul expr1 mulop expr2 -> return Int
+  EAdd expr1 addop expr2 -> fail "lel"
+  ERel expr1 relop expr2 -> return Bool
+  EAnd expr1 expr2 -> return Bool
+  EOr expr1 expr2 -> return Bool
 
 genExpr :: Expr -> GenM Operand
 genExpr x = case x of
@@ -388,13 +426,17 @@ instance Show QFunDef where
   show (QFunDef (Ident ident) type_ quads _) =
     printf "function %s {\n%s}" ident $ unlines (map show quads)
 
+funType :: TopDef -> (Ident, Type)
+funType x = case x of
+  FnDef t ident args _ ->
+    (ident, Fun t $ map (\(Arg t _) -> t) args)
 
-makeFun :: Type -> Ident -> [Arg] -> GenM a -> QFunDef
-makeFun type_ ident args gen =
+makeFun :: GenEnv -> Type -> Ident -> [Arg] -> GenM a -> QFunDef
+makeFun initEnv type_ ident args gen =
   let fntype = Fun type_ (map (\(Arg t _) -> t) args)
       vars = map (\(Arg t ident, i) -> insertVar ident (Param $ Reg ("~p"++show i)) t)
         $ zip args [0..length args - 1]
-      env = foldr (.) id vars newEnv
+      env = foldr (.) id vars initEnv
       state = newState
       (s, output) = execRWS gen env state
     in QFunDef ident fntype output (toInteger . length $ args)
@@ -421,7 +463,7 @@ predefPrintInt =
       emitParam form
       emitCallExternal "free"
       emit QVRet
-  in makeFun Void (Ident "printInt") [Arg Int parm] code
+  in makeFun newEnv Void (Ident "printInt") [Arg Int parm] code
 
 predefPrintString :: QFunDef
 predefPrintString =
@@ -433,7 +475,7 @@ predefPrintString =
       emitParam x
       emitCallExternal "puts"
       emit QVRet
-  in makeFun Void (Ident "printString") [Arg Str parm] code
+  in makeFun newEnv Void (Ident "printString") [Arg Str parm] code
 
 predefReadInt :: QFunDef
 predefReadInt =
@@ -450,7 +492,7 @@ predefReadInt =
       checkIfZero read_
       res <- emitLoad x
       emit $ QRet res
-  in makeFun Int (Ident "readInt") [] code
+  in makeFun newEnv Int (Ident "readInt") [] code
 
 predefReadString :: QFunDef
 predefReadString =
@@ -463,7 +505,7 @@ predefReadString =
       res <- emitCallExternal "gets"
       checkIfZero res
       emit $ QRet res
-  in makeFun Str (Ident "readString") [] code
+  in makeFun newEnv Str (Ident "readString") [] code
 
 predefError :: QFunDef
 predefError =
@@ -471,18 +513,19 @@ predefError =
     emitLabel $ Label "entry"
     emit QError
   }
-  in makeFun Void (Ident "error") [] code
+  in makeFun newEnv Void (Ident "error") [] code
 
-
-genFun :: TopDef -> QFunDef
-genFun (FnDef type_ ident args block) =
+genFun :: GenEnv -> TopDef -> QFunDef
+genFun initEnv (FnDef type_ ident args block) =
   let {gen = do
     emitLabel $ Label "entry"
     genStmt $ BStmt block}
-  in makeFun type_ ident args gen
+  in makeFun initEnv type_ ident args gen
 
 genProgram :: Program -> [QFunDef]
 genProgram (Program topdefs) =
+  let defs = topdefs 
+  let initEnv = foldl insertFunType newEnv $ map
   map genFun topdefs ++
     [predefPrintInt, predefPrintString, predefError,
       predefReadString, predefReadInt]
