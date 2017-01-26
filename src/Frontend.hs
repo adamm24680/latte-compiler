@@ -1,5 +1,5 @@
 module Frontend
-  (getRepr, Err, Program)
+  (getRepr, Err, Program, predefs)
     where
 
 import qualified Data.Map as Map
@@ -90,8 +90,14 @@ inferExpr env x = case x of
   Not expr -> checkExpr env Bool expr >> return Bool
   EMul expr1 mulop expr2 ->
     checkTwo Int expr1 expr2 >> return Int
-  EAdd expr1 addop expr2 ->
-    checkTwo Int expr1 expr2 >> return Int
+  EAdd expr1 addop expr2 -> case addop of
+    Minus -> checkTwo Int expr1 expr2 >> return Int
+    Plus -> do
+      t1 <- inferExpr env expr1
+      t2 <- inferExpr env expr2
+      when (t1 /= t2 || t1 /= Str && t1 /= Int)
+        (fail $ "invalid operands in " ++ printTree x)
+      return t1
   ERel expr1 relop expr2 ->
     checkTwo Int expr1 expr2 >> return Bool
   EAnd expr1 expr2 ->

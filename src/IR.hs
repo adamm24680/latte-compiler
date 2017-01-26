@@ -8,6 +8,7 @@ import AbsLatte
 import Control.Monad
 import Control.Monad.RWS
 import Text.Printf
+import qualified Frontend (predefs)
 
 instance PrintfArg Ident where
   formatArg (Ident s) _ = showString s
@@ -189,7 +190,7 @@ emitCallExternal str = do
 
 emitWrite :: Operand -> Int -> Operand -> GenM ()
 emitWrite base offset value = do
-  dest <- emitBin QBinOp QSub base (LitInt . toInteger $((-4)*offset))
+  dest <- emitBin QBinOp QAdd base (LitInt . toInteger $(4*offset))
   emit $ QStore dest value
 
 
@@ -269,7 +270,7 @@ inferExpr x = case x of
   Neg expr -> return Int
   Not expr -> return Bool
   EMul expr1 mulop expr2 -> return Int
-  EAdd expr1 addop expr2 -> fail "lel"
+  EAdd expr1 addop expr2 -> inferExpr expr1
   ERel expr1 relop expr2 -> return Bool
   EAnd expr1 expr2 -> return Bool
   EOr expr1 expr2 -> return Bool
@@ -305,14 +306,18 @@ genExpr x = case x of
       e1 <- genExpr expr1
       e2 <- genExpr expr2
       emitBin QBinOp op e1 e2
-  EAdd expr1 addop expr2 ->
-    let {op = case addop of
-      Plus -> QAdd
-      Minus -> QSub}
-    in do
-      e1 <- genExpr expr1
-      e2 <- genExpr expr2
-      emitBin QBinOp op e1 e2
+  EAdd expr1 addop expr2 -> do
+    type_ <- inferExpr expr1
+    case type_ of
+      Str -> genAddStr expr1 expr2
+      Int ->
+        let {op = case addop of
+          Plus -> QAdd
+          Minus -> QSub}
+        in do
+          e1 <- genExpr expr1
+          e2 <- genExpr expr2
+          emitBin QBinOp op e1 e2
   ERel expr1 relop expr2 ->
     let {op = case relop of
       LTH -> L
@@ -345,6 +350,26 @@ genExpr x = case x of
     emit $ QGoto l2
     emitLabel l2
     emitPhi e1 e2
+
+genAddStr :: Expr -> Expr -> GenM Operand
+genAddStr expr1 expr2 = do
+  e1 <- genExpr expr1
+  e2 <- genExpr expr2
+  emitParam e1
+  l1 <- emitCallExternal "strlen"
+  emitParam e2
+  l2 <- emitCallExternal "strlen"
+  st <- emitBin QBinOp QAdd l1 l2
+  st2 <- emitBin QBinOp QAdd st (LitInt 1)
+  emitParam st2
+  allocated <- emitCallExternal "malloc"
+  emitParam allocated
+  emitParam e1
+  emitCallExternal "strcpy"
+  emitParam allocated
+  emitParam e2
+  emitCallExternal "strcat"
+  return allocated
 
 genStmts :: [Stmt] -> GenM ()
 genStmts l =
@@ -423,8 +448,8 @@ genStmt x = case x of
 data QFunDef = QFunDef Ident Type [Quadruple] Integer
 
 instance Show QFunDef where
-  show (QFunDef (Ident ident) type_ quads _) =
-    printf "function %s {\n%s}" ident $ unlines (map show quads)
+  show (QFunDef (Ident ident) type_ quads params) =
+    printf "function %s(%d) {\n%s}" ident params $ unlines (map show quads)
 
 funType :: TopDef -> (Ident, Type)
 funType x = case x of
@@ -524,8 +549,8 @@ genFun initEnv (FnDef type_ ident args block) =
 
 genProgram :: Program -> [QFunDef]
 genProgram (Program topdefs) =
-  let defs = topdefs 
-  let initEnv = foldl insertFunType newEnv $ map
-  map genFun topdefs ++
+  let defs = topdefs ++ Frontend.predefs
+      initEnv = foldl insertFunType newEnv $ map funType defs
+  in map (genFun initEnv) topdefs ++
     [predefPrintInt, predefPrintString, predefError,
       predefReadString, predefReadInt]
