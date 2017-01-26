@@ -63,8 +63,8 @@ data Quadruple =
   QPhi Operand Operand Operand |
   QVRet |
   QRet Operand |
-  QBasePointer Operand |
-  QAlloca Operand
+  QAlloca Operand |
+  QError
 
 instance Show Quadruple where
    show x = case x of
@@ -85,8 +85,9 @@ instance Show Quadruple where
      QPhi d s1 s2 -> printf "  %s = phi(%s, %s)" d s1 s2
      QVRet -> "  ret"
      QRet r -> printf "  ret %s" r
-     QBasePointer d -> printf "  %s = gen bp" d
      QLabel l -> printf "%s:" l
+     QAlloca d -> printf "  %s = alloca" d
+     QError -> printf "  error()"
 
 data GenState = GenState {
   labelCounter :: Integer,
@@ -94,8 +95,7 @@ data GenState = GenState {
   }
 
 data GenEnv = GenEnv {
-  varInfo :: Map.Map Ident (VarLoc, Type),
-  basePointer :: Operand }
+  varInfo :: Map.Map Ident (VarLoc, Type)}
 
 type GenM a = RWS GenEnv [Quadruple] GenState a
 
@@ -103,9 +103,9 @@ newState :: GenState
 newState =
   GenState {labelCounter = 0, regCounter = 0}
 
-newEnv :: Operand -> GenEnv
-newEnv bp =
-  GenEnv {basePointer = bp, varInfo = Map.empty}
+newEnv :: GenEnv
+newEnv =
+  GenEnv { varInfo = Map.empty}
 
 getVarLoc :: Ident -> GenM VarLoc
 getVarLoc ident = do
@@ -182,6 +182,9 @@ emitAlloca = do
   new <- newReg
   emit $ QAlloca new
   return new
+
+emitLabel :: Label -> GenM ()
+emitLabel = emit . QLabel
 
 emitStore :: Operand -> Operand -> GenM ()
 emitStore dest src = emit $ QStore dest src
@@ -288,21 +291,21 @@ genExpr x = case x of
     e1 <- genExpr expr1
     [l1, l2] <- replicateM 2 newLabel
     emit $ QGotoBool e1 l1 l2
-    emit $ QLabel l1
+    emitLabel l1
     e2 <- genExpr expr2
     e3 <- emitAnd e1 e2
     emit $ QGoto l2
-    emit $ QLabel l2
+    emitLabel l2
     emitPhi e1 e2
   EOr expr1 expr2 -> do
     e1 <- genExpr expr1
     [l1, l2] <- replicateM 2 newLabel
     emit $ QGotoBool e1 l2 l1
-    emit $ QLabel l1
+    emitLabel l1
     e2 <- genExpr expr2
     e3 <- emitAnd e1 e2
     emit $ QGoto l2
-    emit $ QLabel l2
+    emitLabel l2
     emitPhi e1 e2
 
 genStmts :: [Stmt] -> GenM ()
@@ -348,32 +351,32 @@ genStmt x = case x of
     [l1, l2] <- replicateM 2 newLabel
     e <- genExpr expr
     emit $ QGotoBool e l1 l2
-    emit $ QLabel l1
+    emitLabel l1
     genStmt stmt
     emit $ QGoto l2
-    emit $ QLabel l2
+    emitLabel l2
     ask
   CondElse expr stmt1 stmt2 -> do
     [l1, l2, l3] <- replicateM 3 newLabel
     e <- genExpr expr
     emit $ QGotoBool e l1 l2
-    emit $ QLabel l1
+    emitLabel l1
     genStmt stmt1
     emit $ QGoto l3
-    emit $ QLabel l2
+    emitLabel l2
     genStmt stmt2
     emit $ QGoto l3
-    emit $ QLabel l3
+    emitLabel l3
     ask
   While expr stmt -> do
     [l1, l2] <- replicateM 2 newLabel
     e1 <- genExpr expr
     emit $ QGotoBool e1 l1 l2
-    emit $ QLabel l1
+    emitLabel l1
     genStmt stmt
     e2 <- genExpr expr
     emit $ QGotoBool e2 l1 l2
-    emit $ QLabel l2
+    emitLabel l2
     ask
   SExp expr -> do
     genExpr expr
@@ -385,20 +388,101 @@ instance Show QFunDef where
   show (QFunDef (Ident ident) type_ quads _) =
     printf "function %s {\n%s}" ident $ unlines (map show quads)
 
-genFun :: TopDef -> QFunDef
-genFun (FnDef type_ ident args block) =
+
+makeFun :: Type -> Ident -> [Arg] -> GenM a -> QFunDef
+makeFun type_ ident args gen =
   let fntype = Fun type_ (map (\(Arg t _) -> t) args)
-      bp = Reg "bp"
-      gen = do
-        emit $ QLabel (Label "entry")
-        emit $ QBasePointer bp
-        genStmt (BStmt block)
       vars = map (\(Arg t ident, i) -> insertVar ident (Param $ Reg ("~p"++show i)) t)
         $ zip args [0..length args - 1]
-      env = foldr (.) id vars $ newEnv bp
+      env = foldr (.) id vars newEnv
       state = newState
       (s, output) = execRWS gen env state
     in QFunDef ident fntype output (toInteger . length $ args)
 
+checkIfZero :: Operand -> GenM ()
+checkIfZero reg = do
+  [l1, l2] <- replicateM 2 newLabel
+  emit $ QGotoBool reg l2 l1
+  emitLabel l1
+  emit QError
+  emitLabel l2
+
+predefPrintInt :: QFunDef
+predefPrintInt =
+  let
+    parm = Ident "i"
+    code = do
+      emitLabel $ Label "entry"
+      x <- loadVar parm
+      form <- genExpr $ EString "%d"
+      emitParam form
+      emitParam x
+      emitCallExternal "printf"
+      emitParam form
+      emitCallExternal "free"
+      emit QVRet
+  in makeFun Void (Ident "printInt") [Arg Int parm] code
+
+predefPrintString :: QFunDef
+predefPrintString =
+  let
+    parm = Ident "s"
+    code = do
+      emitLabel $ Label "entry"
+      x <- loadVar parm
+      emitParam x
+      emitCallExternal "puts"
+      emit QVRet
+  in makeFun Void (Ident "printString") [Arg Str parm] code
+
+predefReadInt :: QFunDef
+predefReadInt =
+  let
+    code = do
+      emitLabel $ Label "entry"
+      x <- emitAlloca
+      form <- genExpr $ EString "%d"
+      emitParam form
+      emitParam x
+      read_ <- emitCallExternal "scanf"
+      emitParam form
+      emitCallExternal "free"
+      checkIfZero read_
+      res <- emitLoad x
+      emit $ QRet res
+  in makeFun Int (Ident "readInt") [] code
+
+predefReadString :: QFunDef
+predefReadString =
+  let
+    code = do
+      emitLabel $ Label "entry"
+      emitParam $ LitInt 256
+      dest <- emitCallExternal "malloc"
+      emitParam dest
+      res <- emitCallExternal "gets"
+      checkIfZero res
+      emit $ QRet res
+  in makeFun Str (Ident "readString") [] code
+
+predefError :: QFunDef
+predefError =
+  let {code = do
+    emitLabel $ Label "entry"
+    emit QError
+  }
+  in makeFun Void (Ident "error") [] code
+
+
+genFun :: TopDef -> QFunDef
+genFun (FnDef type_ ident args block) =
+  let {gen = do
+    emitLabel $ Label "entry"
+    genStmt $ BStmt block}
+  in makeFun type_ ident args gen
+
 genProgram :: Program -> [QFunDef]
-genProgram (Program topdefs) = map genFun topdefs
+genProgram (Program topdefs) =
+  map genFun topdefs ++
+    [predefPrintInt, predefPrintString, predefError,
+      predefReadString, predefReadInt]

@@ -169,9 +169,16 @@ checkTopDef env (FnDef type_ ident args block)  = do
   let (Block stmts) = block
   void $ checkStmts env2 type_ stmts
 
+predefs :: [TopDef]
+predefs = [FnDef Void (Ident "printInt") [Arg Int $ Ident ""] $ Block [],
+  FnDef Void (Ident "printString") [Arg Str $ Ident ""] $ Block [],
+  FnDef Void (Ident "error") [] $ Block [],
+  FnDef Int (Ident "readInt") [] $ Block [],
+  FnDef Str (Ident "readString") [] $ Block []]
+
 checkProgram :: Program -> Err Program
 checkProgram (Program topdefs) = do
-  env1 <- foldM declTopDef emptyEnv topdefs
+  env1 <- foldM declTopDef emptyEnv (predefs ++ topdefs)
   let checked = map (checkTopDef env1) topdefs
   if any (not . errToBool) checked then
     let {append a x = case x of
