@@ -15,7 +15,7 @@ import Compiler.Hoopl (Label, UniqueMonad, Unique, freshUnique, freshLabel)
 instance PrintfArg Ident where
   formatArg (Ident s) _ = showString s
 
-data Operand = Reg String | LitInt Integer
+data Operand = Reg String | LitInt Integer | Local Ident
 instance Show Operand where
   show (Reg i) = i
   show (LitInt i) = show i
@@ -240,25 +240,26 @@ loadVar :: Ident -> GenM Operand
 loadVar ident = do
   loc <- getVarLoc ident
   case loc of
-    Stack reg -> emitLoad reg
+    Stack reg -> return reg
     Param reg -> return reg
 
 storeVar :: Ident -> Operand -> GenM()
 storeVar ident val = do
   loc <- getVarLoc ident
   case loc of
-    Stack reg -> emitStore reg val
+    Stack reg -> emit $ QCopy reg val
     Param _ -> fail "internal error: assignment to parameter"
 
 
 genDecl :: Type -> Item -> GenM GenEnv
 genDecl type_ item = do
   env <- ask
-  new <- emitAlloca
-  let loc = Stack new
+
   let {(e, ident) = case item of
     NoInit ident -> (default_ type_, ident)
     Init ident expr -> (expr, ident)}
+  let new = Local ident
+  let loc = Stack new
   r <- genExpr e
   emitStore new r
   return $ insertVar ident loc type_ env
