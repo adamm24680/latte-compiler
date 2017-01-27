@@ -18,12 +18,14 @@ library
                      , grammar
   exposed-modules:     Frontend
                      , IR
+                     , Opt
                      , AbsLatte
                      , ErrM
                      , LexLatte
                      , ParLatte
                      , PrintLatte
   build-depends:       base >= 4.7 && < 5
+                     , hoopl
                      , array
                      , mtl
                      , containers

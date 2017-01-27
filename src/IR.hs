@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 module IR
   (Operand, Label, Quadruple, BinOp, CompOp, QFunDef, genProgram)
   where
@@ -9,6 +10,7 @@ import Control.Monad
 import Control.Monad.RWS
 import Text.Printf
 import qualified Frontend (predefs)
+import Compiler.Hoopl (Label, UniqueMonad, Unique, freshUnique, freshLabel)
 
 instance PrintfArg Ident where
   formatArg (Ident s) _ = showString s
@@ -41,9 +43,9 @@ instance PrintfArg CompOp where
     IR.NE -> "!="
 
 
-newtype Label = Label String deriving (Show)
+--newtype Label = Label String deriving (Show)
 instance PrintfArg Label where
-   formatArg (Label s) _ = showString s
+   formatArg l _ = shows l
 
 data VarLoc = Stack Operand | Param Operand
 
@@ -94,7 +96,7 @@ instance Show Quadruple where
      QError -> printf "  error()"
 
 data GenState = GenState {
-  labelCounter :: Integer,
+  uniqueC :: Unique,
   regCounter:: Integer
   }
 
@@ -102,11 +104,18 @@ data GenEnv = GenEnv {
   varInfo :: Map.Map Ident (VarLoc, Type),
   funInfo :: Map.Map Ident Type}
 
-type GenM a = RWS GenEnv [Quadruple] GenState a
+type GenM = RWS GenEnv [Quadruple] GenState
+
+instance UniqueMonad GenM where
+  freshUnique = do
+    state <- get
+    let number = uniqueC state
+    put state{uniqueC = number+1}
+    return number
 
 newState :: GenState
 newState =
-  GenState {labelCounter = 0, regCounter = 0}
+  GenState {uniqueC = 0, regCounter = 0}
 
 newEnv :: GenEnv
 newEnv =
@@ -219,12 +228,12 @@ newReg = do
   put state{regCounter = number+1}
   return $ Reg ("r" ++ show number)
 
-newLabel :: GenM Label
-newLabel = do
-  state <- get
-  let number = labelCounter state
-  put state{labelCounter = number+1}
-  return $ Label ("l" ++ show number)
+--newLabel :: GenM Label
+--newLabel = do
+  --state <- get
+  --let number = labelCounter state
+  --put state{labelCounter = number+1}
+  --return $ Label ("l" ++ show number)
 
 
 loadVar :: Ident -> GenM Operand
@@ -332,7 +341,7 @@ genExpr x = case x of
       emitBin QCompOp op e1 e2
   EAnd expr1 expr2 -> do
     e1 <- genExpr expr1
-    [l1, l2] <- replicateM 2 newLabel
+    [l1, l2] <- replicateM 2 freshLabel
     emit $ QGotoBool e1 l1 l2
     emitLabel l1
     e2 <- genExpr expr2
@@ -342,7 +351,7 @@ genExpr x = case x of
     emitPhi e1 e2
   EOr expr1 expr2 -> do
     e1 <- genExpr expr1
-    [l1, l2] <- replicateM 2 newLabel
+    [l1, l2] <- replicateM 2 freshLabel
     emit $ QGotoBool e1 l2 l1
     emitLabel l1
     e2 <- genExpr expr2
@@ -411,7 +420,7 @@ genStmt x = case x of
   Ret expr -> genExpr expr >>= (emit . QRet) >> ask
   VRet -> emit QVRet >> ask
   Cond expr stmt -> do
-    [l1, l2] <- replicateM 2 newLabel
+    [l1, l2] <- replicateM 2 freshLabel
     e <- genExpr expr
     emit $ QGotoBool e l1 l2
     emitLabel l1
@@ -420,7 +429,7 @@ genStmt x = case x of
     emitLabel l2
     ask
   CondElse expr stmt1 stmt2 -> do
-    [l1, l2, l3] <- replicateM 3 newLabel
+    [l1, l2, l3] <- replicateM 3 freshLabel
     e <- genExpr expr
     emit $ QGotoBool e l1 l2
     emitLabel l1
@@ -432,7 +441,7 @@ genStmt x = case x of
     emitLabel l3
     ask
   While expr stmt -> do
-    [l1, l2] <- replicateM 2 newLabel
+    [l1, l2] <- replicateM 2 freshLabel
     e1 <- genExpr expr
     emit $ QGotoBool e1 l1 l2
     emitLabel l1
@@ -468,7 +477,7 @@ makeFun initEnv type_ ident args gen =
 
 checkIfZero :: Operand -> GenM ()
 checkIfZero reg = do
-  [l1, l2] <- replicateM 2 newLabel
+  [l1, l2] <- replicateM 2 freshLabel
   emit $ QGotoBool reg l2 l1
   emitLabel l1
   emit QError
@@ -479,7 +488,8 @@ predefPrintInt =
   let
     parm = Ident "i"
     code = do
-      emitLabel $ Label "entry"
+      label <- freshLabel
+      emitLabel label
       x <- loadVar parm
       form <- genExpr $ EString "%d"
       emitParam form
@@ -495,7 +505,8 @@ predefPrintString =
   let
     parm = Ident "s"
     code = do
-      emitLabel $ Label "entry"
+      label <- freshLabel
+      emitLabel label
       x <- loadVar parm
       emitParam x
       emitCallExternal "puts"
@@ -506,7 +517,8 @@ predefReadInt :: QFunDef
 predefReadInt =
   let
     code = do
-      emitLabel $ Label "entry"
+      label <- freshLabel
+      emitLabel label
       x <- emitAlloca
       form <- genExpr $ EString "%d"
       emitParam form
@@ -523,7 +535,8 @@ predefReadString :: QFunDef
 predefReadString =
   let
     code = do
-      emitLabel $ Label "entry"
+      label <- freshLabel
+      emitLabel label
       emitParam $ LitInt 256
       dest <- emitCallExternal "malloc"
       emitParam dest
@@ -535,7 +548,8 @@ predefReadString =
 predefError :: QFunDef
 predefError =
   let {code = do
-    emitLabel $ Label "entry"
+    label <- freshLabel
+    emitLabel label
     emit QError
   }
   in makeFun newEnv Void (Ident "error") [] code
@@ -543,7 +557,8 @@ predefError =
 genFun :: GenEnv -> TopDef -> QFunDef
 genFun initEnv (FnDef type_ ident args block) =
   let {gen = do
-    emitLabel $ Label "entry"
+    label <- freshLabel
+    emitLabel label
     genStmt $ BStmt block}
   in makeFun initEnv type_ ident args gen
 
