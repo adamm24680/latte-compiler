@@ -1,6 +1,6 @@
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances, GADTs, StandaloneDeriving #-}
 module IR
-  (Operand, Label, Quadruple, BinOp, CompOp, QFunDef, genProgram)
+  (Operand(..), Label, Quad(..), BinOp(..), CompOp(..), QFunDef(..), genProgram)
   where
 
 
@@ -10,12 +10,18 @@ import Control.Monad
 import Control.Monad.RWS
 import Text.Printf
 import qualified Frontend (predefs)
-import Compiler.Hoopl (Label, UniqueMonad, Unique, freshUnique, freshLabel)
+import Compiler.Hoopl (Label, UniqueMonad, NonLocal, entryLabel, successors,  Unique,
+ freshUnique, freshLabel, C, O, Graph, (|*><*|),
+  mkFirst, mkLast, mkMiddles, emptyClosedGraph, showGraph)
+import qualified Compiler.Hoopl as H ((<*>))
+import Data.Maybe
+import Data.Dynamic
+
 
 instance PrintfArg Ident where
   formatArg (Ident s) _ = showString s
 
-data Operand = Reg String | LitInt Integer | Local Ident
+data Operand = Reg String | LitInt Integer | Local Ident deriving(Eq)
 instance Show Operand where
   show (Reg i) = i
   show (LitInt i) = show i
@@ -24,7 +30,7 @@ instance PrintfArg Operand where
     Reg s -> showString s
     LitInt i -> shows i
 
-data BinOp = QAdd | QSub | QMul | QDiv | QMod
+data BinOp = QAdd | QSub | QMul | QDiv | QMod deriving(Eq)
 instance PrintfArg BinOp where
   formatArg x _ = showString $ case x of
     QAdd -> "+"
@@ -32,7 +38,7 @@ instance PrintfArg BinOp where
     QMul -> "*"
     QDiv -> "/"
     QMod -> "%"
-data CompOp = L | LE | G | GE | E | NE
+data CompOp = L | LE | G | GE | E | NE deriving(Eq)
 instance PrintfArg CompOp where
   formatArg x _ = showString $ case x of
     L -> "<"
@@ -49,30 +55,41 @@ instance PrintfArg Label where
 
 data VarLoc = Stack Operand | Param Operand
 
-data Quadruple =
-  QBinOp Operand BinOp Operand Operand |
-  QCompOp Operand CompOp Operand Operand |
-  QAnd Operand Operand Operand |
-  QOr Operand Operand Operand |
-  QNeg Operand Operand |
-  QNot Operand Operand |
-  QLoad Operand Operand |
-  QStore Operand Operand |
-  QCopy Operand Operand |
-  QGoto Label |
-  --QGotoComp Operand CompOp Operand Label Label |
-  QGotoBool Operand Label Label |
-  QParam Operand |
-  QCall Operand Ident |
-  QCallExternal Operand String |
-  QLabel Label |
-  QPhi Operand Operand Operand |
-  QVRet |
-  QRet Operand |
-  QAlloca Operand |
-  QError
+data Quad e x where
+  QBinOp :: Operand -> BinOp -> Operand -> Operand -> Quad O O
+  QCompOp :: Operand -> CompOp -> Operand -> Operand -> Quad O O
+  QAnd :: Operand -> Operand -> Operand -> Quad O O
+  QOr :: Operand -> Operand -> Operand -> Quad O O
+  QNeg :: Operand -> Operand -> Quad O O
+  QNot :: Operand -> Operand -> Quad O O
+  QLoad :: Operand -> Operand -> Quad O O
+  QStore :: Operand -> Operand -> Quad O O
+  QCopy :: Operand -> Operand -> Quad O O
+  QGoto :: Label -> Quad O C
+  --QGotoComp Operand CompOp Operand Label Label -> Quad e x
+  QGotoBool :: Operand -> Label -> Label -> Quad O C
+  QParam :: Operand -> Quad O O
+  QCall :: Operand -> Ident -> Quad O O
+  QCallExternal :: Operand -> String -> Quad O O
+  QLabel :: Label -> Quad C O
+  QPhi :: Operand -> Operand -> Operand -> Quad O O
+  QVRet :: Quad O C
+  QRet :: Operand -> Quad O C
+  QAlloca :: Operand -> Quad O O
+  QError :: Quad O C
 
-instance Show Quadruple where
+deriving instance Eq (Quad x e)
+
+instance NonLocal Quad where
+  entryLabel (QLabel l) = l
+  successors (QRet _) = []
+  successors QVRet = []
+  successors QError = []
+  successors (QGoto l) = [l]
+  successors (QGotoBool _ l1 l2) = [l1, l2]
+
+
+instance Show (Quad e x) where
    show x = case x of
      QBinOp d op s1 s2 -> printf "  %s = %s %s %s" d s1 op s2
      QCompOp d op s1 s2 -> printf "  %s = %s %s %s" d s1 op s2
@@ -95,6 +112,7 @@ instance Show Quadruple where
      QAlloca d -> printf "  %s = alloca" d
      QError -> printf "  error()"
 
+
 data GenState = GenState {
   uniqueC :: Unique,
   regCounter:: Integer
@@ -104,7 +122,7 @@ data GenEnv = GenEnv {
   varInfo :: Map.Map Ident (VarLoc, Type),
   funInfo :: Map.Map Ident Type}
 
-type GenM = RWS GenEnv [Quadruple] GenState
+type GenM = RWS GenEnv [Dynamic] GenState
 
 instance UniqueMonad GenM where
   freshUnique = do
@@ -151,50 +169,50 @@ insertVar ident varloc type_ env =
   env{varInfo = Map.insert ident (varloc, type_) (varInfo env)}
 
 
-emit :: Quadruple -> GenM ()
-emit a = tell [a]
+emit :: Typeable a => a -> GenM ()
+emit a = tell [toDyn a]
 
-emitBin :: (Operand -> a -> Operand -> Operand -> Quadruple) -> a ->
+emitBin :: (Operand -> a -> Operand -> Operand -> Quad O O) -> a ->
   Operand -> Operand -> GenM Operand
 emitBin con op r1 r2 = do
   dest <- newReg
-  tell [con dest op r1 r2]
+  emit $ con dest op r1 r2
   return dest
 
 emitAnd r1 r2 = do
   dest <- newReg
-  tell [QAnd dest r1 r2]
+  emit $ QAnd dest r1 r2
   return dest
 
 emitOr r1 r2 = do
   dest <- newReg
-  tell [QOr dest r1 r2]
+  emit $ QOr dest r1 r2
   return dest
 
 emitPhi r1 r2 = do
   dest <- newReg
-  tell [QPhi dest r1 r2]
+  emit $ QPhi dest r1 r2
   return dest
 
-emitUn :: (Operand -> Operand -> Quadruple) -> Operand -> GenM Operand
+emitUn :: (Operand -> Operand -> Quad O O) -> Operand -> GenM Operand
 emitUn con r = do
   dest <- newReg
-  tell [con dest r]
+  emit $ con dest r
   return dest
 
 emitParam :: Operand -> GenM ()
-emitParam operand = tell [QParam operand]
+emitParam operand = emit $ QParam operand
 
 emitCall :: Ident -> GenM Operand
 emitCall ident = do
   dest <- newReg
-  tell [QCall dest ident]
+  emit $ QCall dest ident
   return dest
 
 emitCallExternal :: String -> GenM Operand
 emitCallExternal str = do
   dest <- newReg
-  tell [QCallExternal dest str]
+  emit $ QCallExternal dest str
   return dest
 
 emitWrite :: Operand -> Int -> Operand -> GenM ()
@@ -455,11 +473,34 @@ genStmt x = case x of
     genExpr expr
     ask
 
-data QFunDef = QFunDef Ident Type [Quadruple] Integer
+data QFunDef = QFunDef Ident Type (Label, Graph Quad C C) Integer
 
 instance Show QFunDef where
-  show (QFunDef (Ident ident) type_ quads params) =
-    printf "function %s(%d) {\n%s}" ident params $ unlines (map show quads)
+  show (QFunDef (Ident ident) type_ (entry, graph) params) =
+    printf "function %s(%d) {\n%s}" ident params $
+      showGraph show graph
+
+
+splitBlocks :: [Dynamic] -> [[Dynamic]]
+splitBlocks list =
+  let {
+    splt l cur acc =
+      case l of
+        h : t -> case (fromDynamic :: Dynamic -> Maybe (Quad C O)) h of
+          Just _ -> splt t [h] (reverse cur : acc)
+          Nothing -> splt t (h: cur) acc
+        [] -> reverse acc ++ [reverse cur]}
+  in tail $ splt list [] []
+
+makeBlock :: [Dynamic] -> (Label, Graph Quad C C)
+makeBlock l =
+  let flt fun = map fromJust . filter (Nothing /=) . map fun
+      entry = head . flt (fromDynamic :: Dynamic -> Maybe (Quad C O)) $ l
+      exit =  head . flt (fromDynamic :: Dynamic -> Maybe (Quad O C)) $ l
+      --exit = QError
+      middle = flt (fromDynamic :: Dynamic -> Maybe (Quad O O)) l
+      (QLabel label) = entry
+  in (label, mkFirst entry H.<*> mkMiddles middle H.<*> mkLast exit)
 
 funType :: TopDef -> (Ident, Type)
 funType x = case x of
@@ -474,7 +515,10 @@ makeFun initEnv type_ ident args gen =
       env = foldr (.) id vars initEnv
       state = newState
       (s, output) = execRWS gen env state
-    in QFunDef ident fntype output (toInteger . length $ args)
+      (labels, blocks) = unzip . map makeBlock . splitBlocks $ output
+      entry = head labels
+      graph = foldl (|*><*|) emptyClosedGraph blocks
+    in QFunDef ident fntype (entry, graph) (toInteger . length $ args)
 
 checkIfZero :: Operand -> GenM ()
 checkIfZero reg = do
@@ -560,7 +604,8 @@ genFun initEnv (FnDef type_ ident args block) =
   let {gen = do
     label <- freshLabel
     emitLabel label
-    genStmt $ BStmt block}
+    genStmt $ BStmt block
+    emit QError}
   in makeFun initEnv type_ ident args gen
 
 genProgram :: Program -> [QFunDef]
