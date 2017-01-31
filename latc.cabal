@@ -17,6 +17,7 @@ library
   hs-source-dirs:      src
                      , grammar
   exposed-modules:     Frontend
+                     , GenIR
                      , IR
                      , Opt
                      , AbsLatte
