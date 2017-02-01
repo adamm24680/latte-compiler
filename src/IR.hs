@@ -12,7 +12,7 @@ instance PrintfArg Ident where
 
 data Operand = Reg String
   |LitInt Integer
-  -- |Local Ident 
+  -- |Local Ident
   deriving(Eq, Ord)
 instance Show Operand where
   show (Reg i) = i
@@ -57,7 +57,6 @@ data Quad e x where
   QStore :: Operand -> Operand -> Quad O O
   QCopy :: Operand -> Operand -> Quad O O
   QGoto :: Label -> Quad O C
-  --QGotoComp Operand CompOp Operand Label Label -> Quad e x
   QGotoBool :: Operand -> Label -> Label -> Quad O C
   QParam :: Operand -> Quad O O
   QCall :: Operand -> Ident -> Quad O O
