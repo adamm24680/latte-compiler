@@ -58,6 +58,7 @@ varIsLit = mkFTransfer ft
       QLabel l -> f
       QAlloca d -> Map.insert d CTop f
       QError -> mapEmpty
+      QLoadParam d i -> Map.insert d CTop f
 
 propRewrite :: FuelMonad m => FwdRewrite m (Quad Operand) PropFact
 propRewrite = mkFRewrite rw
@@ -190,6 +191,7 @@ liveTransfer = mkBTransfer tr
       QRet r -> addUse r $ fact_bot liveLattice
       QAlloca d -> delUse d f
       QError -> fact_bot liveLattice
+      QLoadParam d _ -> delUse d f
     delUse = Set.delete
     addUse o f =
       case o of
@@ -213,6 +215,7 @@ deadElimRewrite = mkBRewrite elim
       QNot d _ -> elimIf d f
       QLoad d _ -> elimIf d f
       QAlloca d -> elimIf d f
+      QLoadParam d _ -> elimIf d f
       _ -> Nothing
     elimIf d f = if not (Set.member d f) then Just emptyGraph else Nothing
 

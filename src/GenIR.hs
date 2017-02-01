@@ -19,7 +19,7 @@ import Data.Maybe
 import Data.Dynamic
 
 
-data VarLoc = Stack Operand | Param Operand
+data VarLoc = Stack Operand | Param Int
 
 data GenState = GenState {
   uniqueC :: Unique,
@@ -111,6 +111,12 @@ emitUn con r = do
 emitParam :: Operand -> GenM ()
 emitParam operand = emit $ QParam operand
 
+emitLoadParam :: Int -> GenM Operand
+emitLoadParam i = do
+  dest <- newReg
+  emit $ QLoadParam dest i
+  return dest
+
 emitCall :: Ident -> GenM Operand
 emitCall ident = do
   dest <- newReg
@@ -167,7 +173,7 @@ loadVar ident = do
   loc <- getVarLoc ident
   case loc of
     Stack reg -> return reg
-    Param reg -> return reg
+    Param i -> emitLoadParam i
 
 storeVar :: Ident -> Operand -> GenM()
 storeVar ident val = do
@@ -414,7 +420,7 @@ funType x = case x of
 makeFun :: GenEnv -> Type -> Ident -> [Arg] -> GenM a -> QFunDef
 makeFun initEnv type_ ident args gen =
   let fntype = Fun type_ (map (\(Arg t _) -> t) args)
-      vars = map (\(Arg t ident, i) -> insertVar ident (Param $ Reg ("~p"++show i)) t)
+      vars = map (\(Arg t ident, i) -> insertVar ident (Param i) t)
         $ zip args [0..length args - 1]
       env = foldr (.) id vars initEnv
       state = newState

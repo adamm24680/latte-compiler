@@ -5,7 +5,7 @@ module IR (Operand(..), Label, Quad(..), BinOp(..), CompOp(..), QFunDef(..))
 
 import qualified Data.Map as Map
 import Text.Printf
-import Compiler.Hoopl (Label,C, O, NonLocal, entryLabel, successors, Graph, showGraph)
+import Compiler.Hoopl (Label, C, O, NonLocal(..), Graph, showGraph, HooplNode(..))
 import AbsLatte
 
 instance PrintfArg Ident where
@@ -68,6 +68,7 @@ data Quad t e x where
   QRet :: t -> Quad t O C
   QAlloca :: t -> Quad t O O
   QError :: Quad t O C
+  QLoadParam :: t -> Int -> Quad t O O
 deriving instance Eq t => Eq (Quad t e x)
 
 instance NonLocal (Quad t) where
@@ -78,6 +79,9 @@ instance NonLocal (Quad t) where
   successors (QGoto l) = [l]
   successors (QGotoBool _ l1 l2) = [l1, l2]
 
+instance HooplNode (Quad t) where
+  mkBranchNode = QGoto
+  mkLabelNode = QLabel
 
 instance Show (Quad Operand e x) where
    show x = case x of
@@ -101,6 +105,7 @@ instance Show (Quad Operand e x) where
      QLabel l -> printf "%s:" l
      QAlloca d -> printf "  %s = alloca" d
      QError -> printf "  error()"
+     QLoadParam d i -> printf "  %s = loadParam %d" d i
 
 data QFunDef = QFunDef Ident Type (Label, Graph (Quad Operand) C C) Integer
 
