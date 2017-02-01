@@ -18,6 +18,7 @@ instance PrintfArg Operand where
   formatArg x _ = case x of
     Reg s -> showString s
     LitInt i -> shows i
+    Local (Ident s) -> showString s
 
 data BinOp = QAdd | QSub | QMul | QDiv | QMod deriving(Eq)
 instance PrintfArg BinOp where

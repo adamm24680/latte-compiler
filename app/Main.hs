@@ -6,6 +6,7 @@ import System.Exit ( exitFailure, exitSuccess )
 
 import Frontend
 import IR
+import GenIR
 
 
 genIR p = do
