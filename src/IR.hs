@@ -1,10 +1,10 @@
 {-# LANGUAGE FlexibleInstances, GADTs, StandaloneDeriving #-}
-module IR (Operand(..), Label, Quad(..), BinOp(..), CompOp(..))
+module IR (Operand(..), Label, Quad(..), BinOp(..), CompOp(..), QFunDef(..))
   where
 
 import qualified Data.Map as Map
 import Text.Printf
-import Compiler.Hoopl (Label,C, O, NonLocal, entryLabel, successors)
+import Compiler.Hoopl (Label,C, O, NonLocal, entryLabel, successors, Graph, showGraph)
 import AbsLatte
 
 instance PrintfArg Ident where
@@ -99,3 +99,10 @@ instance Show (Quad e x) where
      QLabel l -> printf "%s:" l
      QAlloca d -> printf "  %s = alloca" d
      QError -> printf "  error()"
+
+data QFunDef = QFunDef Ident Type (Label, Graph Quad C C) Integer
+
+instance Show QFunDef where
+  show (QFunDef (Ident ident) type_ (entry, graph) params) =
+    printf "function %s(%d) {\n%s}" ident params $
+      showGraph show graph

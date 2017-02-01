@@ -7,12 +7,17 @@ import System.Exit ( exitFailure, exitSuccess )
 import Frontend
 import IR
 import GenIR
+import Opt
 
 
 genIR p = do
   let l = genProgram p
-  let out = unlines $ map show l
+  let l1 = map constPropOptFun l
+  let out = unlines $ take 1$ map show l
+  let out1 = unlines $ take 1 $ map show l1
   putStrLn out
+  putStrLn "==============="
+  putStrLn out1
   return l
 
 

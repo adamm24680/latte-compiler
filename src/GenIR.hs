@@ -380,14 +380,6 @@ genStmt x = case x of
     genExpr expr
     ask
 
-data QFunDef = QFunDef Ident Type (Label, Graph Quad C C) Integer
-
-instance Show QFunDef where
-  show (QFunDef (Ident ident) type_ (entry, graph) params) =
-    printf "function %s(%d) {\n%s}" ident params $
-      showGraph show graph
-
-
 splitBlocks :: [Dynamic] -> [[Dynamic]]
 splitBlocks list =
   let {
