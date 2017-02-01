@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances, GADTs, StandaloneDeriving #-}
+{-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 module IR (Operand(..), Label, Quad(..), BinOp(..), CompOp(..), QFunDef(..))
   where
 

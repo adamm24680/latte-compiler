@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances, GADTs #-}
+{-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 module GenIR
   (QFunDef(..), genProgram)
   where
@@ -193,7 +194,8 @@ genDecl type_ item = do
   where {default_ t = case t of
     Int -> ELitInt 0
     Bool -> ELitFalse
-    Str -> EString ""}
+    Str -> EString ""
+    _ -> error "declared variable with function type"}
 
 inferExpr :: Expr -> GenM Type
 inferExpr x = case x of
@@ -255,6 +257,7 @@ genExpr x = case x of
           e1 <- genExpr expr1
           e2 <- genExpr expr2
           emitBin QBinOp op e1 e2
+      _ -> fail "wrong types in expression"
   ERel expr1 relop expr2 ->
     let {op = case relop of
       LTH -> L

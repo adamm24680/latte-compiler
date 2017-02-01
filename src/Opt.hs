@@ -1,4 +1,5 @@
 {-# LANGUAGE GADTs, ScopedTypeVariables #-}
+{-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 module Opt (propOptFun, deadElimOptFun)
   where
 
