@@ -10,7 +10,7 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 
 
-data Const = Const Integer | CTop deriving (Eq)
+data Const = Copied Operand | CTop deriving (Eq)
 type ConstFact = Map.Map Operand Const
 
 constLattice :: DataflowLattice ConstFact
@@ -24,7 +24,7 @@ constLattice = DataflowLattice {
       case (old, new) of
         (CTop, _) -> (NoChange, CTop)
         (_, CTop) -> (SomeChange, CTop)
-        (Const old, Const new) | new == old -> (NoChange, Const new)
+        (Copied old, Copied new) | new == old -> (NoChange, Copied new)
                                | otherwise -> (SomeChange, CTop)
 
 initFact :: [Operand] -> ConstFact
@@ -43,12 +43,11 @@ varIsLit = mkFTransfer ft
       QNot d s -> Map.insert d CTop f
       QLoad d s -> Map.insert d CTop f
       QStore d s -> f
-      QCopy d (LitInt k) -> Map.insert d (Const k) f
-      QCopy d s -> Map.insert d CTop f
+      QCopy d s -> Map.insert d (Copied s) f
       QGoto l -> mapSingleton l f
       QGotoBool r l1 l2 -> mkFactBase constLattice
-           [(l1, Map.insert r (Const 1)  f),
-            (l2, Map.insert r (Const 0) f)]
+           [(l1, Map.insert r (Copied $ LitInt 1)  f),
+            (l2, Map.insert r (Copied $ LitInt 0) f)]
       QParam r -> f
       QCall d l -> Map.insert d CTop f
       QCallExternal d l -> Map.insert d CTop f
@@ -79,7 +78,7 @@ constProp = mkFRewrite rw
       QRet r -> rewriteLast f QRet r
       _ -> Nothing
     lp f v = case Map.lookup v f of
-      Just (Const i) -> Just $ LitInt i
+      Just (Copied o) -> Just o
       _ -> Nothing
     rewrite2 f con s1 s2 =
       case (lp f s1, lp f s2) of
