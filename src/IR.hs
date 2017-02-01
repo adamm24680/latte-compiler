@@ -10,7 +10,10 @@ import AbsLatte
 instance PrintfArg Ident where
   formatArg (Ident s) _ = showString s
 
-data Operand = Reg String | LitInt Integer | Local Ident deriving(Eq, Ord)
+data Operand = Reg String
+  |LitInt Integer
+  -- |Local Ident 
+  deriving(Eq, Ord)
 instance Show Operand where
   show (Reg i) = i
   show (LitInt i) = show i
@@ -18,7 +21,7 @@ instance PrintfArg Operand where
   formatArg x _ = case x of
     Reg s -> showString s
     LitInt i -> shows i
-    Local (Ident s) -> showString s
+    --Local (Ident s) -> showString s
 
 data BinOp = QAdd | QSub | QMul | QDiv | QMod deriving(Eq)
 instance PrintfArg BinOp where
@@ -60,7 +63,7 @@ data Quad e x where
   QCall :: Operand -> Ident -> Quad O O
   QCallExternal :: Operand -> String -> Quad O O
   QLabel :: Label -> Quad C O
-  QPhi :: Operand -> Operand -> Operand -> Quad O O
+  --QPhi :: Operand -> Operand -> Operand -> Quad O O
   QVRet :: Quad O C
   QRet :: Operand -> Quad O C
   QAlloca :: Operand -> Quad O O
@@ -93,7 +96,7 @@ instance Show (Quad e x) where
      QParam r -> printf "  param %s" r
      QCall d l -> printf "  %s = call %s" d (show l)
      QCallExternal d l -> printf "  %s = call external %s" d l
-     QPhi d s1 s2 -> printf "  %s = phi(%s, %s)" d s1 s2
+     --QPhi d s1 s2 -> printf "  %s = phi(%s, %s)" d s1 s2
      QVRet -> "  ret"
      QRet r -> printf "  ret %s" r
      QLabel l -> printf "%s:" l

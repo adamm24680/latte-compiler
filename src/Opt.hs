@@ -1,5 +1,5 @@
 {-# LANGUAGE GADTs, ScopedTypeVariables #-}
-module Opt (constPropOptFun) 
+module Opt (constPropOptFun)
   where
 
 import AbsLatte (Ident)
@@ -51,7 +51,7 @@ varIsLit = mkFTransfer ft
       QParam r -> f
       QCall d l -> Map.insert d CTop f
       QCallExternal d l -> Map.insert d CTop f
-      QPhi d s1 s2 -> Map.insert d CTop f
+      --QPhi d s1 s2 -> Map.insert d CTop f
       QVRet -> mapEmpty
       QRet r -> mapEmpty
       QLabel l -> f
@@ -74,7 +74,7 @@ constProp = mkFRewrite rw
       QCopy d s -> rewrite1 f (QCopy d) s
       QGotoBool r l1 l2 -> rewriteLast f (\r1 -> QGotoBool r1 l1 l2) r
       QParam r -> rewrite1 f QParam r
-      QPhi d s1 s2 -> rewrite2 f (QPhi d) s1 s2
+      --QPhi d s1 s2 -> rewrite2 f (QPhi d) s1 s2
       QRet r -> rewriteLast f QRet r
       _ -> Nothing
     lp f v = case Map.lookup v f of

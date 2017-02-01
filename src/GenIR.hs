@@ -96,10 +96,10 @@ emitOr r1 r2 = do
   emit $ QOr dest r1 r2
   return dest
 
-emitPhi r1 r2 = do
-  dest <- newReg
-  emit $ QPhi dest r1 r2
-  return dest
+--emitPhi r1 r2 = do
+--  dest <- newReg
+--  emit $ QPhi dest r1 r2
+--  return dest
 
 emitUn :: (Operand -> Operand -> Quad O O) -> Operand -> GenM Operand
 emitUn con r = do
@@ -179,14 +179,16 @@ storeVar ident val = do
 genDecl :: Type -> Item -> GenM GenEnv
 genDecl type_ item = do
   env <- ask
-
   let {(e, ident) = case item of
     NoInit ident -> (default_ type_, ident)
     Init ident expr -> (expr, ident)}
-  let new = Local ident
+  uniq <- freshUnique
+  let (Ident s) = ident
+  let new = Reg $ printf "v%d_%s" uniq s
   let loc = Stack new
   r <- genExpr e
-  emitStore new r
+  --emitStore new r
+  emit $ QCopy new r
   return $ insertVar ident loc type_ env
   where {default_ t = case t of
     Int -> ELitInt 0
@@ -271,20 +273,20 @@ genExpr x = case x of
     emit $ QGotoBool e1 l1 l2
     emitLabel l1
     e2 <- genExpr expr2
-    e3 <- emitAnd e1 e2
+    emit $ QAnd e1 e1 e2
     emit $ QGoto l2
     emitLabel l2
-    emitPhi e1 e2
+    return e1
   EOr expr1 expr2 -> do
     e1 <- genExpr expr1
     [l1, l2] <- replicateM 2 freshLabel
     emit $ QGotoBool e1 l2 l1
     emitLabel l1
     e2 <- genExpr expr2
-    e3 <- emitAnd e1 e2
+    emit $ QAnd e1 e1 e2
     emit $ QGoto l2
     emitLabel l2
-    emitPhi e1 e2
+    return  e1
 
 genAddStr :: Expr -> Expr -> GenM Operand
 genAddStr expr1 expr2 = do
