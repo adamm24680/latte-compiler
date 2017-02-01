@@ -18,6 +18,7 @@ library
                      , grammar
   exposed-modules:     Frontend
                      , GenIR
+                     , RegAlloc
                      , IR
                      , Opt
                      , AbsLatte
@@ -26,6 +27,8 @@ library
                      , ParLatte
                      , PrintLatte
   build-depends:       base >= 4.7 && < 5
+                     , linearscan 
+                     , linearscan-hoopl
                      , hoopl
                      , array
                      , mtl
