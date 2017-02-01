@@ -76,10 +76,10 @@ insertVar ident varloc type_ env =
   env{varInfo = Map.insert ident (varloc, type_) (varInfo env)}
 
 
-emit :: Typeable a => a -> GenM ()
+emit :: (Typeable e, Typeable x) => Quad Operand e x -> GenM ()
 emit a = tell [toDyn a]
 
-emitBin :: (Operand -> a -> Operand -> Operand -> Quad O O) -> a ->
+emitBin :: (Operand -> a -> Operand -> Operand -> Quad Operand O O) -> a ->
   Operand -> Operand -> GenM Operand
 emitBin con op r1 r2 = do
   dest <- newReg
@@ -101,7 +101,7 @@ emitOr r1 r2 = do
 --  emit $ QPhi dest r1 r2
 --  return dest
 
-emitUn :: (Operand -> Operand -> Quad O O) -> Operand -> GenM Operand
+emitUn :: (Operand -> Operand -> Quad Operand O O) -> Operand -> GenM Operand
 emitUn con r = do
   dest <- newReg
   emit $ con dest r
@@ -387,19 +387,19 @@ splitBlocks list =
   let {
     splt l cur acc =
       case l of
-        h : t -> case (fromDynamic :: Dynamic -> Maybe (Quad C O)) h of
+        h : t -> case (fromDynamic :: Dynamic -> Maybe (Quad Operand C O)) h of
           Just _ -> splt t [h] (reverse cur : acc)
           Nothing -> splt t (h: cur) acc
         [] -> reverse acc ++ [reverse cur]}
   in tail $ splt list [] []
 
-makeBlock :: [Dynamic] -> (Label, Graph Quad C C)
+makeBlock :: [Dynamic] -> (Label, Graph (Quad Operand) C C)
 makeBlock l =
   let flt fun = map fromJust . filter (Nothing /=) . map fun
-      entry = head . flt (fromDynamic :: Dynamic -> Maybe (Quad C O)) $ l
-      exit =  head . flt (fromDynamic :: Dynamic -> Maybe (Quad O C)) $ l
+      entry = head . flt (fromDynamic :: Dynamic -> Maybe (Quad Operand C O)) $ l
+      exit =  head . flt (fromDynamic :: Dynamic -> Maybe (Quad Operand O C)) $ l
       --exit = QError
-      middle = flt (fromDynamic :: Dynamic -> Maybe (Quad O O)) l
+      middle = flt (fromDynamic :: Dynamic -> Maybe (Quad Operand O O)) l
       (QLabel label) = entry
   in (label, mkFirst entry H.<*> mkMiddles middle H.<*> mkLast exit)
 

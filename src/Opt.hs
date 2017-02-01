@@ -30,10 +30,10 @@ propLattice = DataflowLattice {
 initFact :: [Operand] -> PropFact
 initFact ops = Map.fromList  [(v, CTop) | v <- ops]
 
-varIsLit :: FwdTransfer Quad PropFact
+varIsLit :: FwdTransfer (Quad Operand) PropFact
 varIsLit = mkFTransfer ft
   where
-    ft :: Quad e x -> PropFact -> Fact x PropFact
+    ft :: (Quad Operand) e x -> PropFact -> Fact x PropFact
     ft q f = case q of
       QBinOp d op s1 s2 -> Map.insert d CTop f
       QCompOp d op s1 s2 -> Map.insert d CTop f
@@ -58,10 +58,10 @@ varIsLit = mkFTransfer ft
       QAlloca d -> Map.insert d CTop f
       QError -> mapEmpty
 
-propRewrite :: FuelMonad m => FwdRewrite m Quad PropFact
+propRewrite :: FuelMonad m => FwdRewrite m (Quad Operand) PropFact
 propRewrite = mkFRewrite rw
   where
-    rw :: FuelMonad m => Quad e x -> PropFact -> m (Maybe(Graph Quad e x))
+    rw :: FuelMonad m => (Quad Operand) e x -> PropFact -> m (Maybe(Graph (Quad Operand) e x))
     rw q f = return $ case q of
       QBinOp d op s1 s2 -> rewrite2 f (QBinOp d op) s1 s2
       QCompOp d op s1 s2 -> rewrite2 f (QCompOp d op) s1 s2
@@ -95,9 +95,9 @@ propRewrite = mkFRewrite rw
         Nothing -> Nothing
         Just c1 -> Just $ mkLast $ con c1
 
-simplify :: FuelMonad m => FwdRewrite m Quad f
+simplify :: FuelMonad m => FwdRewrite m (Quad Operand) f
 simplify = mkFRewrite rw where
-  rw :: FuelMonad m => Quad e x -> f -> m (Maybe(Graph Quad e x))
+  rw :: FuelMonad m => (Quad Operand) e x -> f -> m (Maybe(Graph (Quad Operand) e x))
   rw q _ = return $ case q of
     QCompOp d op (LitInt i1) (LitInt i2) ->
       let {fn = case op of
@@ -136,7 +136,7 @@ simplify = mkFRewrite rw where
       toInt b = if b then toInteger 1 else toInteger 0
       toBool i = i /= 0
 
-propPass :: FuelMonad m => FwdPass m Quad PropFact
+propPass :: FuelMonad m => FwdPass m (Quad Operand) PropFact
 propPass = FwdPass {
   fp_lattice = propLattice,
   fp_transfer = varIsLit,
@@ -165,10 +165,10 @@ liveLattice = DataflowLattice {
       j = Set.union new old
       ch = changeIf (Set.size j > Set.size old)
 
-liveTransfer :: BwdTransfer Quad LiveVars
+liveTransfer :: BwdTransfer (Quad Operand) LiveVars
 liveTransfer = mkBTransfer tr
   where
-    tr :: Quad e x -> Fact x LiveVars -> LiveVars
+    tr :: (Quad Operand) e x -> Fact x LiveVars -> LiveVars
     tr q f = case q of
       QLabel _  -> f
       QCopy d s -> addUse s $ delUse d f
@@ -198,10 +198,10 @@ liveTransfer = mkBTransfer tr
     update1 d s f = addUse s $ delUse d f
     factL factbase l = fromMaybe Set.empty $ lookupFact l factbase
 
-deadElimRewrite :: FuelMonad m => BwdRewrite m Quad LiveVars
+deadElimRewrite :: FuelMonad m => BwdRewrite m (Quad Operand) LiveVars
 deadElimRewrite = mkBRewrite elim
   where
-    elim :: Monad m => Quad e x -> Fact x LiveVars -> m (Maybe (Graph Quad e x))
+    elim :: Monad m => (Quad Operand) e x -> Fact x LiveVars -> m (Maybe (Graph (Quad Operand) e x))
     elim q f = return $ case q of
       QCopy d _ -> elimIf d f
       QBinOp d _ _ _ -> elimIf d f
