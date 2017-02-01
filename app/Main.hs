@@ -12,7 +12,7 @@ import Opt
 
 genIR p = do
   let l = genProgram p
-  let l1 = map constPropOptFun l
+  let l1 = map propOptFun l
   let l2 = map deadElimOptFun l1
   let out = unlines $ take 1$ map show l
   let out1 = unlines $ take 1 $ map show l1

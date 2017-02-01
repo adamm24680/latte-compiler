@@ -1,5 +1,5 @@
 {-# LANGUAGE GADTs, ScopedTypeVariables #-}
-module Opt (constPropOptFun, deadElimOptFun)
+module Opt (propOptFun, deadElimOptFun)
   where
 
 import AbsLatte (Ident)
@@ -10,30 +10,30 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 
 
-data Const = Copied Operand | CTop deriving (Eq)
-type ConstFact = Map.Map Operand Const
+data Copied = Copied Operand | CTop deriving (Eq)
+type PropFact = Map.Map Operand Copied
 
-constLattice :: DataflowLattice ConstFact
-constLattice = DataflowLattice {
+propLattice :: DataflowLattice PropFact
+propLattice = DataflowLattice {
   fact_name = "const var",
   fact_bot = Map.empty,
-  fact_join = joinMaps constFactAdd
+  fact_join = joinMaps propFactAdd
 }
   where
-    constFactAdd _ (OldFact old) (NewFact new) =
+    propFactAdd _ (OldFact old) (NewFact new) =
       case (old, new) of
         (CTop, _) -> (NoChange, CTop)
         (_, CTop) -> (SomeChange, CTop)
         (Copied old, Copied new) | new == old -> (NoChange, Copied new)
                                | otherwise -> (SomeChange, CTop)
 
-initFact :: [Operand] -> ConstFact
+initFact :: [Operand] -> PropFact
 initFact ops = Map.fromList  [(v, CTop) | v <- ops]
 
-varIsLit :: FwdTransfer Quad ConstFact
+varIsLit :: FwdTransfer Quad PropFact
 varIsLit = mkFTransfer ft
   where
-    ft :: Quad e x -> ConstFact -> Fact x ConstFact
+    ft :: Quad e x -> PropFact -> Fact x PropFact
     ft q f = case q of
       QBinOp d op s1 s2 -> Map.insert d CTop f
       QCompOp d op s1 s2 -> Map.insert d CTop f
@@ -45,7 +45,7 @@ varIsLit = mkFTransfer ft
       QStore d s -> f
       QCopy d s -> Map.insert d (Copied s) f
       QGoto l -> mapSingleton l f
-      QGotoBool r l1 l2 -> mkFactBase constLattice
+      QGotoBool r l1 l2 -> mkFactBase propLattice
            [(l1, Map.insert r (Copied $ LitInt 1)  f),
             (l2, Map.insert r (Copied $ LitInt 0) f)]
       QParam r -> f
@@ -58,10 +58,10 @@ varIsLit = mkFTransfer ft
       QAlloca d -> Map.insert d CTop f
       QError -> mapEmpty
 
-constProp :: FuelMonad m => FwdRewrite m Quad ConstFact
-constProp = mkFRewrite rw
+propRewrite :: FuelMonad m => FwdRewrite m Quad PropFact
+propRewrite = mkFRewrite rw
   where
-    rw :: FuelMonad m => Quad e x -> ConstFact -> m (Maybe(Graph Quad e x))
+    rw :: FuelMonad m => Quad e x -> PropFact -> m (Maybe(Graph Quad e x))
     rw q f = return $ case q of
       QBinOp d op s1 s2 -> rewrite2 f (QBinOp d op) s1 s2
       QCompOp d op s1 s2 -> rewrite2 f (QCompOp d op) s1 s2
@@ -136,20 +136,20 @@ simplify = mkFRewrite rw where
       toInt b = if b then toInteger 1 else toInteger 0
       toBool i = i /= 0
 
-constPropPass :: FuelMonad m => FwdPass m Quad ConstFact
-constPropPass = FwdPass {
-  fp_lattice = constLattice,
+propPass :: FuelMonad m => FwdPass m Quad PropFact
+propPass = FwdPass {
+  fp_lattice = propLattice,
   fp_transfer = varIsLit,
-  fp_rewrite = constProp `thenFwdRw` simplify
+  fp_rewrite = propRewrite `thenFwdRw` simplify
 }
 
-constPropOptFun :: QFunDef -> QFunDef
-constPropOptFun (QFunDef ident type_ (l, graph) params) =
+propOptFun :: QFunDef -> QFunDef
+propOptFun (QFunDef ident type_ (l, graph) params) =
   QFunDef ident type_ (l, newgraph) params
   where
     (newgraph, _, _) = runSimpleUniqueMonad $
       (runWithFuel :: Monad m => Fuel -> InfiniteFuelMonad m a -> m a) infiniteFuel $
-        analyzeAndRewriteFwd constPropPass (JustC [l]) graph facts
+        analyzeAndRewriteFwd propPass (JustC [l]) graph facts
     facts = mapSingleton l $ initFact [Reg $ "~p" ++ show i | i <- [0..params-1]]
 
 type LiveVars = Set.Set Operand
