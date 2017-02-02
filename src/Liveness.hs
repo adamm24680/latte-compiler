@@ -14,6 +14,13 @@ type LiveVars = Set.Set Operand
 
 data LiveAnnotated e x = LiveAnnotated (LiveVars, Quad Operand e x)
 
+instance Show (LiveAnnotated e x) where
+  show (LiveAnnotated(s, q)) =show q++"\n"++"Live vars: " ++ show (Set.toList s) 
+
+
+instance NonLocal LiveAnnotated where
+  entryLabel (LiveAnnotated(_, q)) = entryLabel q
+  successors (LiveAnnotated(_, q)) = successors q
 
 liveLattice :: DataflowLattice LiveVars
 liveLattice = DataflowLattice {
@@ -98,3 +105,15 @@ deadElimPass = BwdPass {
   bp_transfer = liveTransfer,
   bp_rewrite = deadElimRewrite
 }
+
+livenessAnn :: QFunDef Operand -> Lel
+livenessAnn (QFunDef ident type_ (l, graph) params) = Lel newgraph
+  where
+    graph2 = mapGraph (\q -> LiveAnnotated (Set.empty, q)) graph
+    (newgraph, _, _) = runSimpleUniqueMonad $
+      (runWithFuel :: Monad m => Fuel -> InfiniteFuelMonad m a -> m a) infiniteFuel $
+        analyzeAndRewriteBwd deadElimPass (JustC [l]) graph2 mapEmpty
+
+data Lel = Lel (Graph LiveAnnotated C C)
+instance Show Lel where
+  show (Lel g) = showGraph show g

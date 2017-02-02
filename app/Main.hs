@@ -10,12 +10,14 @@ import GenIR
 import Opt
 import RegAlloc
 
+import Liveness (livenessAnn)
+
 
 genIR p = do
   let l = genProgram p
   let l1 = map propOptFun l
   let l2 = map deadElimOptFun l1
-  let l3 = map allocateRegisters l2
+  let l3 = map livenessAnn l2
   let out = unlines $ take 1$ map show l
   let out1 = unlines $ take 1 $ map show l1
   let out2 = unlines $ take 1 $ map show l2
