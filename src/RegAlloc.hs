@@ -58,7 +58,7 @@ instance NodeAlloc (Quad PreAllocRegs) (Quad AllocatedOp) where
   mkLabelOp = QLabel
   mkJumpOp = QGoto
 
-  getReferences q = concatMap getVarInfo rt
+  getReferences q = clean $ concatMap getVarInfo rt
     where
       rt :: [PreAllocRegs]
       rt = case q of
@@ -173,7 +173,7 @@ allocateRegisters (QFunDef ident type_ (l, graph) params) =
   where
     varMap = buildVarMap graph
     mapped = mapGraph (convNode varMap) graph
-    (d, res) = allocateHoopl nreg 0 4 VerifyEnabled l mapped
+    (d, res) = allocateHoopl nreg 0 4 VerifyDisabled l mapped
     rg = case res of
       Left l -> error $ "error during regalloc:\n" ++ unlines l
-      Right r -> error d
+      Right r -> r

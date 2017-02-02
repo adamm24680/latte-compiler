@@ -1,0 +1,100 @@
+{-# LANGUAGE GADTs, ScopedTypeVariables #-}
+{-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
+module Liveness
+  where
+
+import AbsLatte (Ident)
+import IR ( Quad(..), Operand(..), BinOp(..), CompOp(..), QFunDef(..))
+import Compiler.Hoopl
+import Data.Maybe
+import qualified Data.Map as Map
+import qualified Data.Set as Set
+
+type LiveVars = Set.Set Operand
+
+data LiveAnnotated e x = LiveAnnotated (LiveVars, Quad Operand e x)
+
+
+liveLattice :: DataflowLattice LiveVars
+liveLattice = DataflowLattice {
+  fact_name = "live registers" ,
+  fact_bot = Set.empty,
+  fact_join = join
+} where
+  join _ (OldFact old) (NewFact new) = (ch, j)
+    where
+      j = Set.union new old
+      ch = changeIf (Set.size j > Set.size old)
+
+liveTransfer :: BwdTransfer LiveAnnotated LiveVars
+liveTransfer = mkBTransfer tr
+  where
+    tr :: LiveAnnotated e x -> Fact x LiveVars -> LiveVars
+    tr (LiveAnnotated (_, q)) f = case q of
+      QLabel _  -> f
+      QCopy d s -> addUse s $ delUse d f
+      QBinOp d op s1 s2 -> update2 d s1 s2 f
+      QCompOp d op s1 s2 -> update2 d s1 s2 f
+      QAnd d s1 s2 -> update2 d s1 s2 f
+      QOr d s1 s2 -> update2 d s1 s2 f
+      QNeg d s -> update1 d s f
+      QNot d s -> update1 d s f
+      QLoad d s -> update1 d s f
+      QStore d s -> addUse d $ addUse s f
+      QGoto l -> factL f l
+      QGotoBool r l1 l2 -> addUse r $ factL f l1 `Set.union` factL f l2
+      QParam r -> addUse r f
+      QCall _ _ -> f
+      QCallExternal _ _ -> f
+      QVRet -> fact_bot liveLattice
+      QRet r -> addUse r $ fact_bot liveLattice
+      QAlloca d -> delUse d f
+      QError -> fact_bot liveLattice
+      QLoadParam d _ -> delUse d f
+    delUse = Set.delete
+    addUse o f =
+      case o of
+        LitInt _ -> f
+        _ -> Set.insert o f
+    update2 d s1 s2 f = addUse s1 $ addUse s2 $ delUse d f
+    update1 d s f = addUse s $ delUse d f
+    factL factbase l = fromMaybe Set.empty $ lookupFact l factbase
+
+deadElimRewrite :: FuelMonad m => BwdRewrite m LiveAnnotated LiveVars
+deadElimRewrite = mkBRewrite3 elimCO elimOO elimOC
+  where
+    elimOO :: Monad m => LiveAnnotated O O -> Fact O LiveVars -> m (Maybe (Graph LiveAnnotated O O))
+    elimOO (LiveAnnotated(_, q)) f = return $ case q of
+      QCopy d _ -> elimIf d
+      QBinOp d _ _ _ -> elimIf d
+      QCompOp d _ _ _ -> elimIf d
+      QAnd d _ _ -> elimIf d
+      QOr d _ _ -> elimIf d
+      QNeg d _ -> elimIf d
+      QNot d _ -> elimIf d
+      QLoad d _ -> elimIf d
+      QAlloca d -> elimIf d
+      QLoadParam d _ -> elimIf d
+      _ -> Just $ mkMiddle $ LiveAnnotated (f, q)
+      where
+        elimIf d =
+          if not (Set.member d f) then
+            Just emptyGraph
+          else
+            Just $ mkMiddle $ LiveAnnotated (f, q)
+    elimCO (LiveAnnotated(_, q)) f =
+      return $ Just $ mkFirst $ LiveAnnotated (f, q)
+    elimOC :: Monad m => LiveAnnotated O C -> Fact C LiveVars -> m (Maybe (Graph LiveAnnotated O C))
+    elimOC (LiveAnnotated(_, q)) f =
+      let scc = successors q
+          facts = map (fromMaybe (fact_bot liveLattice) . (`lookupFact` f)) scc
+          f1 = foldl Set.union Set.empty facts
+      in
+        return $ Just $ mkLast $ LiveAnnotated (f1, q)
+
+deadElimPass :: FuelMonad m => BwdPass m LiveAnnotated LiveVars
+deadElimPass = BwdPass {
+  bp_lattice = liveLattice,
+  bp_transfer = liveTransfer,
+  bp_rewrite = deadElimRewrite
+}
