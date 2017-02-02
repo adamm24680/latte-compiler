@@ -417,7 +417,7 @@ funType x = case x of
   FnDef t ident args _ ->
     (ident, Fun t $ map (\(Arg t _) -> t) args)
 
-makeFun :: GenEnv -> Type -> Ident -> [Arg] -> GenM a -> QFunDef
+makeFun :: GenEnv -> Type -> Ident -> [Arg] -> GenM a -> QFunDef Operand
 makeFun initEnv type_ ident args gen =
   let fntype = Fun type_ (map (\(Arg t _) -> t) args)
       vars = map (\(Arg t ident, i) -> insertVar ident (Param i) t)
@@ -438,7 +438,7 @@ checkIfZero reg = do
   emit QError
   emitLabel l2
 
-predefPrintInt :: QFunDef
+predefPrintInt :: QFunDef Operand
 predefPrintInt =
   let
     parm = Ident "i"
@@ -455,7 +455,7 @@ predefPrintInt =
       emit QVRet
   in makeFun newEnv Void (Ident "printInt") [Arg Int parm] code
 
-predefPrintString :: QFunDef
+predefPrintString :: QFunDef Operand
 predefPrintString =
   let
     parm = Ident "s"
@@ -468,7 +468,7 @@ predefPrintString =
       emit QVRet
   in makeFun newEnv Void (Ident "printString") [Arg Str parm] code
 
-predefReadInt :: QFunDef
+predefReadInt :: QFunDef Operand
 predefReadInt =
   let
     code = do
@@ -486,7 +486,7 @@ predefReadInt =
       emit $ QRet res
   in makeFun newEnv Int (Ident "readInt") [] code
 
-predefReadString :: QFunDef
+predefReadString :: QFunDef Operand
 predefReadString =
   let
     code = do
@@ -500,7 +500,7 @@ predefReadString =
       emit $ QRet res
   in makeFun newEnv Str (Ident "readString") [] code
 
-predefError :: QFunDef
+predefError :: QFunDef Operand
 predefError =
   let {code = do
     label <- freshLabel
@@ -509,7 +509,7 @@ predefError =
   }
   in makeFun newEnv Void (Ident "error") [] code
 
-genFun :: GenEnv -> TopDef -> QFunDef
+genFun :: GenEnv -> TopDef -> QFunDef Operand
 genFun initEnv (FnDef type_ ident args block) =
   let {gen = do
     label <- freshLabel
@@ -518,7 +518,7 @@ genFun initEnv (FnDef type_ ident args block) =
     emit QError}
   in makeFun initEnv type_ ident args gen
 
-genProgram :: Program -> [QFunDef]
+genProgram :: Program -> [QFunDef Operand]
 genProgram (Program topdefs) =
   let defs = topdefs ++ Frontend.predefs
       initEnv = foldl insertFunType newEnv $ map funType defs

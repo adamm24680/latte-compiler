@@ -8,20 +8,25 @@ import Frontend
 import IR
 import GenIR
 import Opt
+import RegAlloc
 
 
 genIR p = do
   let l = genProgram p
   let l1 = map propOptFun l
   let l2 = map deadElimOptFun l1
+  let l3 = map allocateRegisters l2
   let out = unlines $ take 1$ map show l
   let out1 = unlines $ take 1 $ map show l1
   let out2 = unlines $ take 1 $ map show l2
+  let out3 = unlines $ take 1 $ map show l3
   putStrLn out
   putStrLn "==============="
   putStrLn out1
   putStrLn "==============="
   putStrLn out2
+  putStrLn "==============="
+  putStrLn out3
   return l
 
 

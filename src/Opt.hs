@@ -145,14 +145,14 @@ propPass = FwdPass {
   fp_rewrite = propRewrite `thenFwdRw` simplify
 }
 
-propOptFun :: QFunDef -> QFunDef
+propOptFun :: QFunDef Operand -> QFunDef Operand
 propOptFun (QFunDef ident type_ (l, graph) params) =
   QFunDef ident type_ (l, newgraph) params
   where
     (newgraph, _, _) = runSimpleUniqueMonad $
       (runWithFuel :: Monad m => Fuel -> InfiniteFuelMonad m a -> m a) infiniteFuel $
         analyzeAndRewriteFwd propPass (JustC [l]) graph facts
-    facts = mapSingleton l $ initFact [Reg $ "~p" ++ show i | i <- [0..params-1]]
+    facts = mapSingleton l Map.empty
 
 type LiveVars = Set.Set Operand
 
@@ -225,7 +225,7 @@ deadElimPass = BwdPass {
   bp_rewrite = deadElimRewrite
 }
 
-deadElimOptFun :: QFunDef -> QFunDef
+deadElimOptFun :: QFunDef Operand -> QFunDef Operand
 deadElimOptFun (QFunDef ident type_ (l, graph) params) =
   QFunDef ident type_ (l, newgraph) params
   where

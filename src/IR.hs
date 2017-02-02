@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleInstances, GADTs, StandaloneDeriving #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
-module IR (Operand(..), Label, Quad(..), BinOp(..), CompOp(..), QFunDef(..))
+module IR (Operand(..), Label, Quad(..), BinOp(..), CompOp(..), QFunDef(..), qmap)
   where
 
 import qualified Data.Map as Map
@@ -83,7 +83,7 @@ instance HooplNode (Quad t) where
   mkBranchNode = QGoto
   mkLabelNode = QLabel
 
-instance Show (Quad Operand e x) where
+instance PrintfArg t => Show (Quad t e x) where
    show x = case x of
      QBinOp d op s1 s2 -> printf "  %s = %s %s %s" d s1 op s2
      QCompOp d op s1 s2 -> printf "  %s = %s %s %s" d s1 op s2
@@ -130,9 +130,9 @@ qmap f q = case q of
   QError -> QError
   QLoadParam d i -> QLoadParam (f d) i
 
-data QFunDef = QFunDef Ident Type (Label, Graph (Quad Operand) C C) Integer
+data QFunDef t = QFunDef Ident Type (Label, Graph (Quad t) C C) Integer
 
-instance Show QFunDef where
+instance PrintfArg t => Show (QFunDef t) where
   show (QFunDef (Ident ident) type_ (entry, graph) params) =
     printf "function %s(%d) {\n%s}" ident params $
       showGraph show graph
