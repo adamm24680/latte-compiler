@@ -107,6 +107,29 @@ instance Show (Quad Operand e x) where
      QError -> printf "  error()"
      QLoadParam d i -> printf "  %s = loadParam %d" d i
 
+qmap :: (a -> b) -> Quad a e x -> Quad b e x
+qmap f q = case q of
+  QBinOp d op s1 s2 -> QBinOp (f d) op (f s1) (f s2)
+  QCompOp d op s1 s2 -> QCompOp (f d) op (f s1) (f s2)
+  QAnd d s1 s2 -> QAnd (f d) (f s1) (f s2)
+  QOr d s1 s2 -> QOr (f d) (f s1) (f s2)
+  QNeg d s -> QNeg (f d) (f s)
+  QNot d s -> QNot (f d) (f s)
+  QLoad d s -> QLoad (f d) (f s)
+  QStore d s -> QStore (f d) (f s)
+  QCopy d s-> QCopy (f d) (f s)
+  QGoto l -> QGoto l
+  QGotoBool r l1 l2 -> QGotoBool (f r) l1 l2
+  QParam r -> QParam (f r)
+  QCall d l -> QCall (f d) l
+  QCallExternal d l -> QCallExternal (f d) l
+  QVRet -> QVRet
+  QRet r -> QRet (f r)
+  QLabel l -> QLabel l
+  QAlloca d -> QAlloca (f d)
+  QError -> QError
+  QLoadParam d i -> QLoadParam (f d) i
+
 data QFunDef = QFunDef Ident Type (Label, Graph (Quad Operand) C C) Integer
 
 instance Show QFunDef where
