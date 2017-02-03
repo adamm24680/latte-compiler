@@ -123,6 +123,9 @@ type LiveStart = Map.Map Int [Operand]
 type LiveEnd = Map.Map Operand Int
 data LiveRanges = LiveRanges LiveStart LiveEnd
 
+instance Show LiveRanges where
+  show (LiveRanges ls le) = show $ Map.toList ls
+
 getLiveEnd :: Operand -> LiveRanges -> Int
 getLiveEnd op (LiveRanges _ le) = fromJust $ Map.lookup op le
 
@@ -139,9 +142,21 @@ data LiveStateData = LiveStateData
 
 type LiveState a = State LiveStateData a
 
+
+rmdup l seen acc =
+  case l of
+    [] -> acc
+    (pc, []): t -> rmdup t seen acc
+    (pc, starts):t ->
+      let filtered = filter (`Set.notMember` seen) starts
+      in rmdup t (seen `Set.union` Set.fromList filtered) ((pc,filtered):acc)
+
+
+
 computeLiveRanges :: [LiveVars] -> LiveRanges
-computeLiveRanges liveannos = LiveRanges ls le
+computeLiveRanges liveannos = LiveRanges ls2 le
   where
+    ls2 = Map.fromList $ rmdup (Map.toList ls) Set.empty []
     endstate = execState step initstate
     ls = lstarts endstate
     le = lends endstate

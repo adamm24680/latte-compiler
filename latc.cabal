@@ -17,10 +17,10 @@ library
   hs-source-dirs:      src
                      , grammar
   exposed-modules:     Frontend
+                     , Linearscan
                      , Linearise
                      , Liveness
                      , GenIR
-                     , RegAlloc
                      , IR
                      , Opt
                      , AbsLatte
