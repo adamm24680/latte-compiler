@@ -80,7 +80,8 @@ propRewrite = mkFRewrite rw
       QRet r -> rewriteLast f QRet r
       _ -> Nothing
     lp f v = case Map.lookup v f of
-      Just (Copied o) -> Just o
+      Just (Copied(LitInt i)) -> Just (LitInt i)
+      --Just (Copied o) -> Just o
       _ -> Nothing
     rewrite2 f con s1 s2 =
       case (lp f s1, lp f s2) of

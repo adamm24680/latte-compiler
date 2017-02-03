@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances, GADTs, StandaloneDeriving #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
-module IR (Operand(..), Label, Quad(..), BinOp(..), CompOp(..), QFunDef(..), qmap)
+module IR (Operand(..), Label, Quad(..), BinOp(..),
+    CompOp(..), QFunDef(..), qmap, Ins(..))
   where
 
 import qualified Data.Map as Map
@@ -8,11 +9,13 @@ import Text.Printf
 import Compiler.Hoopl (Label, C, O, NonLocal(..), Graph, showGraph, HooplNode(..))
 import AbsLatte
 
+
+
 instance PrintfArg Ident where
   formatArg (Ident s) _ = showString s
 
 data Operand = Reg String
-  |LitInt Integer
+  | LitInt Integer
   -- |Local Ident
   deriving(Eq, Ord)
 instance Show Operand where
@@ -70,6 +73,24 @@ data Quad t e x where
   QError :: Quad t O C
   QLoadParam :: t -> Int -> Quad t O O
 deriving instance Eq t => Eq (Quad t e x)
+
+data Ins t =
+  Fst (Quad t C O) |
+  Mid (Quad t O O) |
+  Lst (Quad t O C)
+
+deriving instance Eq t => Eq (Ins t)
+
+instance PrintfArg t => Show (Ins t) where
+  show (Fst a) = show a ++ "\n"
+  show (Mid b) = show b ++ "\n"
+  show (Lst c) = show c ++ "\n"
+
+instance Functor Ins where
+  fmap f i = case i of
+    Fst a -> Fst $ qmap f a
+    Mid a -> Mid $ qmap f a
+    Lst a -> Lst $ qmap f a
 
 instance NonLocal (Quad t) where
   entryLabel (QLabel l) = l

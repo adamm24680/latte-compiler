@@ -1,6 +1,7 @@
 {-# LANGUAGE GADTs, ScopedTypeVariables #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
-module Liveness
+module Liveness (computeLiveRanges, livenessAnn, LiveAnnotated(..),
+    mkLiveAnnotated, LiveVars, LiveRanges, getLiveStarts, getLiveEnd)
   where
 
 import AbsLatte (Ident)
@@ -9,13 +10,17 @@ import Compiler.Hoopl
 import Data.Maybe
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+import Control.Monad.State
 
 type LiveVars = Set.Set Operand
 
 data LiveAnnotated e x = LiveAnnotated (LiveVars, Quad Operand e x)
 
+mkLiveAnnotated :: Quad Operand e x -> LiveAnnotated e x
+mkLiveAnnotated q = LiveAnnotated (Set.empty, q)
+
 instance Show (LiveAnnotated e x) where
-  show (LiveAnnotated(s, q)) =show q++"\n"++"Live vars: " ++ show (Set.toList s) 
+  show (LiveAnnotated(s, q)) =show q++"\n"++"Live vars: " ++ show (Set.toList s)
 
 
 instance NonLocal LiveAnnotated where
@@ -106,14 +111,69 @@ deadElimPass = BwdPass {
   bp_rewrite = deadElimRewrite
 }
 
-livenessAnn :: QFunDef Operand -> Lel
-livenessAnn (QFunDef ident type_ (l, graph) params) = Lel newgraph
+livenessAnn :: QFunDef Operand -> (Label, Graph LiveAnnotated C C)
+livenessAnn (QFunDef ident type_ (l, graph) params) = (l, newgraph)
   where
-    graph2 = mapGraph (\q -> LiveAnnotated (Set.empty, q)) graph
+    graph2 = mapGraph mkLiveAnnotated graph
     (newgraph, _, _) = runSimpleUniqueMonad $
       (runWithFuel :: Monad m => Fuel -> InfiniteFuelMonad m a -> m a) infiniteFuel $
         analyzeAndRewriteBwd deadElimPass (JustC [l]) graph2 mapEmpty
 
-data Lel = Lel (Graph LiveAnnotated C C)
-instance Show Lel where
-  show (Lel g) = showGraph show g
+type LiveStart = Map.Map Int [Operand]
+type LiveEnd = Map.Map Operand Int
+data LiveRanges = LiveRanges LiveStart LiveEnd
+
+getLiveEnd :: Operand -> LiveRanges -> Int
+getLiveEnd op (LiveRanges _ le) = fromJust $ Map.lookup op le
+
+getLiveStarts :: Int -> LiveRanges -> Maybe [Operand]
+getLiveStarts i (LiveRanges ls _) = Map.lookup i ls
+
+data LiveStateData = LiveStateData
+  { active :: LiveVars
+  , lannos :: [LiveVars]
+  , lstarts :: LiveStart
+  , lends :: LiveEnd
+  , pcCnt :: Int
+  }
+
+type LiveState a = State LiveStateData a
+
+computeLiveRanges :: [LiveVars] -> LiveRanges
+computeLiveRanges liveannos = LiveRanges ls le
+  where
+    endstate = execState step initstate
+    ls = lstarts endstate
+    le = lends endstate
+    initstate = LiveStateData
+                  { active = Set.empty
+                  , lannos = liveannos
+                  , lstarts = Map.empty
+                  , lends = Map.empty
+                  , pcCnt = 0
+                  }
+
+step :: LiveState ()
+step = do
+  annos <- lannos <$> get
+  unless (null annos) $ do
+    pc <- pcCnt <$> get
+    let (la:las) = annos
+    lsmap <- lstarts <$> get
+    lemap <- lends <$> get
+    cur <- active <$> get
+    let new = Set.toList $ la `Set.difference` cur
+    let dead = cur `Set.difference` la
+
+    let alt Nothing = Just new
+        alt (Just old) = Just $ new ++ old
+    modify (\s -> s { lannos = las,
+                      active = la,
+                      lstarts = Map.alter alt pc lsmap,
+                      lends = Set.fold (`Map.insert` pc) lemap dead
+                    })
+    incPC
+    step
+
+incPC :: LiveState ()
+incPC = modify (\s -> s { pcCnt = 1 + pcCnt s })

@@ -11,17 +11,21 @@ import Opt
 import RegAlloc
 
 import Liveness (livenessAnn)
+import Linearise
 
+lingraph g = concatMap show ins
+  where
+    (_, ins) = lineariseAnnotated $ livenessAnn g
 
 genIR p = do
   let l = genProgram p
   let l1 = map propOptFun l
   let l2 = map deadElimOptFun l1
-  let l3 = map livenessAnn l2
+  let l3 = map lingraph l2
   let out = unlines $ take 1$ map show l
   let out1 = unlines $ take 1 $ map show l1
   let out2 = unlines $ take 1 $ map show l2
-  let out3 = unlines $ take 1 $ map show l3
+  let out3 = unlines $ take 1 $ l3
   putStrLn out
   putStrLn "==============="
   putStrLn out1
