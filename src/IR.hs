@@ -1,7 +1,7 @@
-{-# LANGUAGE FlexibleInstances, GADTs, StandaloneDeriving #-}
+{-# LANGUAGE FlexibleInstances, GADTs, StandaloneDeriving, UndecidableInstances #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 module IR (Operand(..), Label, Quad(..), BinOp(..),
-    CompOp(..), QFunDef(..), qmap, Ins(..))
+    CompOp(..), QFunDef(..), qmap, Ins(..), ShowLinRepr(..))
   where
 
 import qualified Data.Map as Map
@@ -151,9 +151,13 @@ qmap f q = case q of
   QError -> QError
   QLoadParam d i -> QLoadParam (f d) i
 
-data QFunDef t = QFunDef Ident Type (Label, Graph (Quad t) C C) Integer
+data QFunDef t = QFunDef Ident Type t Integer
 
-instance PrintfArg t => Show (QFunDef t) where
-  show (QFunDef (Ident ident) type_ (entry, graph) params) =
+
+class ShowLinRepr t where
+  showlr :: t -> String
+
+instance ShowLinRepr t => Show (QFunDef t) where
+  show (QFunDef (Ident ident) type_ g params) =
     printf "function %s(%d) {\n%s}" ident params $
-      showGraph show graph
+      showlr g

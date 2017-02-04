@@ -4,7 +4,7 @@ module Linearscan (linearScan, PhysOp (..))
 
 import Liveness
 import IR
-import Linearise
+import Linearize
 
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -28,13 +28,9 @@ data LsState = LsState {
 
 type LsM a = State LsState a
 
-lsra :: LiveRanges -> Int -> LsM (RegMap, Set.Set Operand, [String])
+lsra :: LiveRanges -> Int -> LsM (RegMap, Set.Set Operand)
 lsra ranges n = do
-  forM_ [0..n] $ \pc -> do
-    st <-get
-    let d2 = show (free st) ++ show (Map.toList $ mapping st) ++
-                show (Set.toList $ active st) ++ show (Set.toList $ spilled st)
-    put $ st {dump = d2 : dump st}
+  forM_ [0..n] $ \pc ->
     case getLiveStarts pc ranges of
       Nothing -> return ()
       Just newregs -> do
@@ -43,12 +39,10 @@ lsra ranges n = do
           lfree <- free <$> get
           if null lfree then
             spillReg ranges reg
-          else do
+          else
             assignReg reg
-            --s <- get
-            --error $ show (free s) ++ show (Map.toList $ mapping s)
   state <- get
-  return (mapping state, spilled state, reverse $dump state)
+  return (mapping state, spilled state)
 
 assignReg :: Operand -> LsM ()
 assignReg op =
@@ -90,19 +84,18 @@ linearScan regs (anns, prog) =
   (filter filterTrivial $ map (fmap mappingFun) prog, Set.size spills)
   where
     ranges = computeLiveRanges anns
-    (mapped, spills, dump) =
+    (mapped, spills) =
       evalState (lsra ranges $ length prog)
         LsState {mapping = Map.empty, free = regs,
                  active = Set.empty, spilled = Set.empty, dump=[] }
     spillMap = Map.fromList $ zip (Set.toList spills) [0.. Set.size spills - 1]
     mappingFun (LitInt i) = Constant i
-    mappingFun reg = w
-      where
-        w = case Map.lookup reg mapped of
-          Just regid -> PhysReg regid
-          Nothing -> case Map.lookup reg spillMap of
-            Just i -> StackSlot i
-            Nothing -> error "unallocated register in linearscan - should not happen"
+    mappingFun reg =
+      case Map.lookup reg mapped of
+        Just regid -> PhysReg regid
+        Nothing -> case Map.lookup reg spillMap of
+          Just i -> StackSlot i
+          Nothing -> error "unallocated register in linearscan - should not happen"
     filterTrivial ins = case ins of
       Mid (QCopy a1 a2) -> a1 /= a2
       _ -> True

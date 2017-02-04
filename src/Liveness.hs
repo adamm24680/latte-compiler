@@ -111,8 +111,10 @@ deadElimPass = BwdPass {
   bp_rewrite = deadElimRewrite
 }
 
-livenessAnn :: QFunDef Operand -> (Label, Graph LiveAnnotated C C)
-livenessAnn (QFunDef ident type_ (l, graph) params) = (l, newgraph)
+livenessAnn :: QFunDef (Label, Graph (Quad Operand) C C) ->
+  QFunDef (Label, Graph LiveAnnotated C C)
+livenessAnn (QFunDef ident type_ (l, graph) params) =
+  QFunDef ident type_ (l, newgraph) params
   where
     graph2 = mapGraph mkLiveAnnotated graph
     (newgraph, _, _) = runSimpleUniqueMonad $

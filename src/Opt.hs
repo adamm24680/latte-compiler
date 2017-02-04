@@ -1,6 +1,7 @@
 {-# LANGUAGE GADTs, ScopedTypeVariables #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
-module Opt (propOptFun, deadElimOptFun)
+--module Opt (propOptFun, deadElimOptFun)
+module Opt (propOptFun)
   where
 
 import AbsLatte (Ident)
@@ -146,7 +147,7 @@ propPass = FwdPass {
   fp_rewrite = propRewrite `thenFwdRw` simplify
 }
 
-propOptFun :: QFunDef Operand -> QFunDef Operand
+propOptFun :: QFunDef (Label, Graph (Quad Operand) C C) -> QFunDef (Label, Graph (Quad Operand) C C)
 propOptFun (QFunDef ident type_ (l, graph) params) =
   QFunDef ident type_ (l, newgraph) params
   where
@@ -155,6 +156,7 @@ propOptFun (QFunDef ident type_ (l, graph) params) =
         analyzeAndRewriteFwd propPass (JustC [l]) graph facts
     facts = mapSingleton l Map.empty
 
+{-
 type LiveVars = Set.Set Operand
 
 liveLattice :: DataflowLattice LiveVars
@@ -232,4 +234,4 @@ deadElimOptFun (QFunDef ident type_ (l, graph) params) =
   where
     (newgraph, _, _) = runSimpleUniqueMonad $
       (runWithFuel :: Monad m => Fuel -> InfiniteFuelMonad m a -> m a) infiniteFuel $
-        analyzeAndRewriteBwd deadElimPass (JustC [l]) graph mapEmpty
+        analyzeAndRewriteBwd deadElimPass (JustC [l]) graph mapEmpty -}

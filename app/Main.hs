@@ -12,43 +12,28 @@ import IR
 import GenIR
 import Opt
 import Liveness
-import Linearise
-import Linearscan
-
-lingraph g = concatMap show ins
-  where
-    (_, ins) = lineariseAnnotated $ livenessAnn g
-
-instance PrintfArg PhysOp where
-  formatArg (PhysReg i) _ = showString $ case i of
-    0 -> "ebx"
-    1 -> "ecx"
-    2 -> "edx"
-    3 -> "esi"
-    4 -> "edi"
-    _ -> "__noreg__"
-  formatArg (StackSlot i) _ = showString $ "[ebp-" ++ show (4 * (i + 1)) ++ "]"
-  formatArg (Constant i) _ = shows i
+import RegAlloc
 
 genIR p = do
   let l = genProgram p
   let l1 = map propOptFun l
   --let l2 = map deadElimOptFun l1
   let l3 = map livenessAnn l1
-  let l4 :: [([LiveVars], [Ins Operand])]
-      l4 = map lineariseAnnotated l3
-  let (l5,_) = unzip $ map (linearScan [0..4]) l4
+  let l4 = map linearizeAndAlloc l3
+  --let l4 :: [([LiveVars], [Ins Operand])]
+  --    l4 = map lineariseAnnotated l3
+  --let (l5,_) = unzip $ map (linearScan [0..4]) l4
   let out = unlines $ take 1$ map show l
   let out1 = unlines $ take 1 $ map show l1
-  --let out2 = unlines $ take 1 $ map show l2
-  let out3 = unlines $ take 1 $ map (concatMap show) l5
+  let out2 = unlines $ take 1 $ map show l4
+  --let out3 = unlines $ take 1 $ map (concatMap show) l5
   putStrLn out
   putStrLn "==============="
   putStrLn out1
   putStrLn "==============="
-  --putStrLn out2
+  putStrLn out2
   putStrLn "==============="
-  putStrLn out3
+  --putStrLn out3
   return l
 
 

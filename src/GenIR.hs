@@ -417,7 +417,8 @@ funType x = case x of
   FnDef t ident args _ ->
     (ident, Fun t $ map (\(Arg t _) -> t) args)
 
-makeFun :: GenEnv -> Type -> Ident -> [Arg] -> GenM a -> QFunDef Operand
+makeFun :: GenEnv -> Type -> Ident -> [Arg] -> GenM a ->
+  QFunDef (Label, Graph (Quad Operand) C C)
 makeFun initEnv type_ ident args gen =
   let fntype = Fun type_ (map (\(Arg t _) -> t) args)
       vars = map (\(Arg t ident, i) -> insertVar ident (Param i) t)
@@ -438,7 +439,7 @@ checkIfZero reg = do
   emit QError
   emitLabel l2
 
-predefPrintInt :: QFunDef Operand
+predefPrintInt :: QFunDef (Label, Graph (Quad Operand) C C)
 predefPrintInt =
   let
     parm = Ident "i"
@@ -455,7 +456,7 @@ predefPrintInt =
       emit QVRet
   in makeFun newEnv Void (Ident "printInt") [Arg Int parm] code
 
-predefPrintString :: QFunDef Operand
+predefPrintString :: QFunDef (Label, Graph (Quad Operand) C C)
 predefPrintString =
   let
     parm = Ident "s"
@@ -468,7 +469,7 @@ predefPrintString =
       emit QVRet
   in makeFun newEnv Void (Ident "printString") [Arg Str parm] code
 
-predefReadInt :: QFunDef Operand
+predefReadInt :: QFunDef (Label, Graph (Quad Operand) C C)
 predefReadInt =
   let
     code = do
@@ -486,7 +487,7 @@ predefReadInt =
       emit $ QRet res
   in makeFun newEnv Int (Ident "readInt") [] code
 
-predefReadString :: QFunDef Operand
+predefReadString :: QFunDef (Label, Graph (Quad Operand) C C)
 predefReadString =
   let
     code = do
@@ -500,7 +501,7 @@ predefReadString =
       emit $ QRet res
   in makeFun newEnv Str (Ident "readString") [] code
 
-predefError :: QFunDef Operand
+predefError :: QFunDef (Label, Graph (Quad Operand) C C)
 predefError =
   let {code = do
     label <- freshLabel
@@ -509,7 +510,7 @@ predefError =
   }
   in makeFun newEnv Void (Ident "error") [] code
 
-genFun :: GenEnv -> TopDef -> QFunDef Operand
+genFun :: GenEnv -> TopDef -> QFunDef (Label, Graph (Quad Operand) C C)
 genFun initEnv (FnDef type_ ident args block) =
   let {gen = do
     label <- freshLabel
@@ -518,10 +519,13 @@ genFun initEnv (FnDef type_ ident args block) =
     emit QError}
   in makeFun initEnv type_ ident args gen
 
-genProgram :: Program -> [QFunDef Operand]
+genProgram :: Program -> [QFunDef (Label, Graph (Quad Operand) C C)]
 genProgram (Program topdefs) =
   let defs = topdefs ++ Frontend.predefs
       initEnv = foldl insertFunType newEnv $ map funType defs
   in map (genFun initEnv) topdefs ++
     [predefPrintInt, predefPrintString, predefError,
       predefReadString, predefReadInt]
+
+instance ShowLinRepr (Label, Graph (Quad Operand) C C) where
+  showlr (_, g) = showGraph show g
