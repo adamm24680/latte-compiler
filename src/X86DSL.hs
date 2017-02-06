@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
-{-# OPTIONS -Wall #-} 
+{-# OPTIONS -Wall #-}
 module X86DSL (X86Address(..), X86Label(..), X86Op(..), X86Ins(..), X86Cond(..),
     X86Reg(..), DSLReg(..))
   where
@@ -77,7 +77,7 @@ instance PrintfArg X86Op where
 
 instance Show X86Ins where
   show x = case x of
-    Label _ -> printf "%s:" $ show x
+    Label l -> printf "%s:" $ show l
     Push op -> printf "    push %s" op
     Pop op -> printf "    pop %s" op
     Mov op1 op2 -> printf "    mov %s, %s" op1 op2

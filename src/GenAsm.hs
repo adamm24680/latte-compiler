@@ -210,7 +210,7 @@ genFun (QFunDef ident type_ insns parms, locals) = do
   modify $ \s -> s {stackOffset = 0}
 
 genNasmRepr :: [QFunDef (Label, Graph LiveAnnotated C C)] -> [String]
-genNasmRepr funlist = [sectdecl, globdecl, extdecl] ++ inslist
+genNasmRepr funlist = [sectdecl, globdecl, extdecl] ++ reverse inslist
   where
     mapping = Map.fromList $
       zip (map (\(QFunDef ident _ _ _) -> ident) funlist) $
