@@ -12,20 +12,20 @@ import IR
 import GenIR
 import Opt
 import Liveness
-import RegAlloc
+import GenAsm
 
 genIR p = do
   let l = genProgram p
   let l1 = map propOptFun l
   --let l2 = map deadElimOptFun l1
   let l3 = map livenessAnn l1
-  let l4 = map linearizeAndAlloc l3
+  let l4 = genNasmRepr l3
   --let l4 :: [([LiveVars], [Ins Operand])]
   --    l4 = map lineariseAnnotated l3
   --let (l5,_) = unzip $ map (linearScan [0..4]) l4
   let out = unlines $ take 1$ map show l
   let out1 = unlines $ take 1 $ map show l1
-  let out2 = unlines $ take 1 $ map show l4
+  let out2 = unlines $ l4
   --let out3 = unlines $ take 1 $ map (concatMap show) l5
   putStrLn out
   putStrLn "==============="

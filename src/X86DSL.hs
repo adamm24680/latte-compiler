@@ -1,5 +1,7 @@
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
-module X86DSL (X86Address(..), X86Label(..), X86Op(..), X86Ins(..), X86Reg(..), DSLReg(..))
+{-# OPTIONS -Wall #-} 
+module X86DSL (X86Address(..), X86Label(..), X86Op(..), X86Ins(..), X86Cond(..),
+    X86Reg(..), DSLReg(..))
   where
 
 import Text.Printf
@@ -33,9 +35,21 @@ data X86Op = PReg X86Reg | PImm Int | PEAddress X86Address | PLabel X86Label
   deriving (Eq)
 instance Show X86Op where
   show (PReg r) = show r
-  show (PImm i) = show i
+  show (PImm i) = "dword " ++ show i
   show (PEAddress a) = "["++show a++"]"
   show (PLabel l) = show l
+
+data X86Cond = CZ | CNZ | CGE | CLE | CG | CL deriving (Eq)
+
+instance Show X86Cond where
+  show CZ = "z"
+  show CNZ = "nz"
+  show CGE = "ge"
+  show CLE = "le"
+  show CG = "g"
+  show CL = "l"
+instance PrintfArg X86Cond where
+  formatArg x _ = shows x
 
 data X86Ins =
   Label X86Label |
@@ -51,7 +65,12 @@ data X86Ins =
   Jz X86Op |
   Jnz X86Op |
   Call X86Op |
-  Ret
+  Ret |
+  Setcc X86Cond |
+  And X86Reg X86Op |
+  Or X86Reg X86Op |
+  Neg X86Op |
+  Not X86Op
 
 instance PrintfArg X86Op where
   formatArg x _ = shows x
@@ -72,6 +91,11 @@ instance Show X86Ins where
     Jnz op -> printf "    jnz %s" op
     Call op -> printf "    call %s" op
     Ret -> printf "    ret"
+    Setcc cond -> printf "    set%s al" cond
+    And reg op -> printf "    and %s, %s" (show reg) op
+    Or reg op -> printf "    or %s, %s" (show reg) op
+    Neg op -> printf "    neg %s" op
+    Not op -> printf "    not %s" op
 
 
 

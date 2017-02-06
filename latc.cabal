@@ -18,7 +18,9 @@ library
                      , grammar
   exposed-modules:     Frontend
                      , GenAsm
-                     , RegAlloc
+                     , Linearize
+                     , Linearscan
+                     , X86DSL
                      , Liveness
                      , GenIR
                      , IR
