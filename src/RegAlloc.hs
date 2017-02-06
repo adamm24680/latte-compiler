@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
-module RegAlloc(linearizeAndAlloc)
+module RegAlloc(linearizeAndAlloc, PhysOp(..), RegId)
   where
 
 import Text.Printf
@@ -10,6 +10,7 @@ import Linearize
 import IR
 import Liveness (LiveAnnotated)
 
+nreg = 5
 
 instance PrintfArg PhysOp where
   formatArg (PhysReg i) _ = showString $ case i of
@@ -26,4 +27,5 @@ instance ShowLinRepr [Ins PhysOp] where
   showlr = unlines . map show
 
 linearizeAndAlloc :: QFunDef (Label, Graph LiveAnnotated C C) -> QFunDef [Ins PhysOp]
-linearizeAndAlloc = undefined
+linearizeAndAlloc (QFunDef ident type_ g params) = QFunDef ident type_ g2 params
+  where (g2, _) = linearScan [0..nreg-1] $ linearizeAnnotated g

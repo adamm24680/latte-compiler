@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleInstances, GADTs, StandaloneDeriving, UndecidableInstances #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 module IR (Operand(..), Label, Quad(..), BinOp(..),
-    CompOp(..), QFunDef(..), qmap, Ins(..), ShowLinRepr(..))
+    CompOp(..), QFunDef(..), qmap, Ins(..), ShowLinRepr(..), Ident(..))
   where
 
 import qualified Data.Map as Map

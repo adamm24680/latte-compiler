@@ -11,24 +11,22 @@ import qualified Data.Set as Set
 import Control.Monad.State
 import Data.Maybe
 
-type RegId = Int
 
-data PhysOp = PhysReg RegId | Constant Integer | StackSlot Int deriving Eq
+data PhysOp t = PhysReg t | Constant Integer | StackSlot Int deriving Eq
 
-type RegMap = Map.Map Operand RegId
 
-data LsState = LsState {
-  mapping :: RegMap,
-  free :: [RegId],
+data LsState t = LsState {
+  mapping ::  Map.Map Operand t,
+  free :: [t],
   active :: Set.Set Operand,
   spilled :: Set.Set Operand,
   dump :: [String]
 }
 
 
-type LsM a = State LsState a
+type LsM t a = State (LsState t) a
 
-lsra :: LiveRanges -> Int -> LsM (RegMap, Set.Set Operand)
+lsra :: LiveRanges -> Int -> LsM t (Map.Map Operand t, Set.Set Operand)
 lsra ranges n = do
   forM_ [0..n] $ \pc ->
     case getLiveStarts pc ranges of
@@ -44,13 +42,13 @@ lsra ranges n = do
   state <- get
   return (mapping state, spilled state)
 
-assignReg :: Operand -> LsM ()
+assignReg :: Operand -> LsM t ()
 assignReg op =
   modify (\s -> s {mapping = Map.insert op (head $ free s) $ mapping s,
                    free = tail $ free s,
                    active = Set.insert op $ active s})
 
-freeReg :: Operand -> LsM ()
+freeReg :: Operand -> LsM t ()
 freeReg reg = do
   lmapping  <- mapping <$> get
   let hreg = fromJust $ Map.lookup reg lmapping
@@ -58,13 +56,13 @@ freeReg reg = do
                     free = hreg : free s}
 
 
-freeRegs :: LiveRanges -> Int -> LsM ()
+freeRegs :: LiveRanges -> Int -> LsM t ()
 freeRegs ranges pc = do
   lactive <- active <$> get
   forM_ lactive $ \reg ->
     when (getLiveEnd reg ranges <= pc) $ freeReg reg
 
-spillReg :: LiveRanges -> Operand -> LsM ()
+spillReg :: LiveRanges -> Operand -> LsM t ()
 spillReg ranges reg = do
   lactive <- active <$> get
   let lr = getLiveEnd reg ranges
@@ -79,7 +77,7 @@ spillReg ranges reg = do
     [] -> modify $ \s -> s{spilled = Set.insert reg $ spilled s}
 
 
-linearScan :: [RegId] -> ([LiveVars], [Ins Operand]) -> ([Ins PhysOp], Int)
+linearScan :: Eq t => [t] -> ([LiveVars], [Ins Operand]) -> ([Ins (PhysOp t)], Int)
 linearScan regs (anns, prog) =
   (filter filterTrivial $ map (fmap mappingFun) prog, Set.size spills)
   where
