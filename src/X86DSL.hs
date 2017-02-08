@@ -1,7 +1,7 @@
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 {-# OPTIONS -Wall #-}
 module X86DSL (X86Address(..), X86Label(..), X86Op(..), X86Ins(..), X86Cond(..),
-    X86Reg(..), DSLReg(..))
+    X86Reg(..), DSLReg(..), elimNoReg)
   where
 
 import Text.Printf
@@ -18,7 +18,8 @@ instance Show X86Reg where
   show Ebp = "ebp"
   show Esp = "esp"
 
-data X86Address = AReg X86Reg | AOff X86Reg Int | ALea X86Reg X86Reg Int Int
+data X86Address = AReg X86Reg | AOff X86Reg Int |
+  ALea X86Reg X86Reg Int Int
   deriving (Eq)
 instance Show X86Address where
   show (AReg r) = show r
@@ -26,18 +27,21 @@ instance Show X86Address where
   show (ALea b m mul off) =
     show b ++ " + "++ show mul ++"*"++ show m ++" + "++ show off
 
+
 newtype X86Label = X86Label String
   deriving (Eq)
 instance Show X86Label where
   show (X86Label s) = s
 
-data X86Op = PReg X86Reg | PImm Int | PEAddress X86Address | PLabel X86Label
+data X86Op = PReg X86Reg | PImm Int | PEAddress X86Address |
+  PLabel X86Label | NoX86Reg
   deriving (Eq)
 instance Show X86Op where
   show (PReg r) = show r
   show (PImm i) = "dword " ++ show i
   show (PEAddress a) = "["++show a++"]"
   show (PLabel l) = show l
+  show NoX86Reg = "__noreg__"
 
 data X86Cond = CZ | CNZ | CGE | CLE | CG | CL deriving (Eq)
 
@@ -66,6 +70,7 @@ data X86Ins =
   Jnz X86Op |
   Call X86Op |
   Ret |
+  Nop |
   Setcc X86Cond |
   And X86Reg X86Op |
   Or X86Reg X86Op |
@@ -91,6 +96,7 @@ instance Show X86Ins where
     Jnz op -> printf "    jnz %s" op
     Call op -> printf "    call %s" op
     Ret -> printf "    ret"
+    Nop -> printf "    nop"
     Setcc cond -> printf "    set%s al" cond
     And reg op -> printf "    and %s, %s" (show reg) op
     Or reg op -> printf "    or %s, %s" (show reg) op
@@ -98,6 +104,36 @@ instance Show X86Ins where
     Not op -> printf "    not %s" op
 
 
+elimNoReg :: X86Ins -> X86Ins
+elimNoReg x = case x of
+  Label _ -> x
+  Push op -> elim1 op
+  Pop op -> elim1 op
+  Mov op1 op2 -> elim2 op1 op2
+  Add op1 op2 -> elim2 op1 op2
+  Sub op1 op2 -> elim2 op1 op2
+  Cmp op1 op2 -> elim2 op1 op2
+  Imul op -> elim1 op
+  Idiv op -> elim1 op
+  Jmp op -> elim1 op
+  Jz op -> elim1 op
+  Jnz op -> elim1 op
+  Call op -> elim1 op
+  Ret -> x
+  Nop -> x
+  Setcc _ -> x
+  And _ op -> elim1 op
+  Or _ op -> elim1 op
+  Neg op -> elim1 op
+  Not op -> elim1 op
+  where
+    elim2 o1 o2 = case (o1,o2) of
+      (NoX86Reg, _) -> Nop
+      (_, NoX86Reg) -> Nop
+      _ -> x
+    elim1 o = case o of
+      NoX86Reg -> Nop
+      _ -> x
 
 class DSLReg t where
   eax :: t

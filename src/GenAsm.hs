@@ -34,6 +34,7 @@ instance Show (PhysOp X86Reg) where
   show (PhysReg r) = show r
   show (Constant i) = show i
   show (StackSlot i) = "[" ++ show Ebp ++ "-"++ show (4*(i+1))++"]"
+  show NoReg = "__noreg__"
 
 
 emit :: X86Ins -> GenM ()
@@ -57,6 +58,7 @@ convOp pr = case pr of
   PhysReg reg -> PReg reg
   Constant i -> PImm $ fromInteger i
   StackSlot i -> PEAddress $ AOff ebp i
+  NoReg -> NoX86Reg
 
 toX86Label :: Label -> X86Label
 toX86Label l = X86Label $ "." ++ show l
@@ -224,4 +226,4 @@ genNasmRepr funlist = [sectdecl, globdecl, extdecl] ++ reverse inslist
     extdecl = "    extern "++ intercalate "," (Set.toList extrs)
     globdecl = "    global main"
     sectdecl = "section .text"
-    inslist = map show $ instrs res
+    inslist = map show $ map elimNoReg $ instrs res

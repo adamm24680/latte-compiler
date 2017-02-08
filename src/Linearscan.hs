@@ -12,7 +12,7 @@ import Control.Monad.State
 import Data.Maybe
 
 
-data PhysOp t = PhysReg t | Constant Integer | StackSlot Int deriving Eq
+data PhysOp t = PhysReg t | Constant Integer | StackSlot Int| NoReg deriving Eq
 
 
 data LsState t = LsState {
@@ -93,7 +93,7 @@ linearScan regs (anns, prog) =
         Just regid -> PhysReg regid
         Nothing -> case Map.lookup reg spillMap of
           Just i -> StackSlot i
-          Nothing -> error "unallocated register in linearscan - should not happen"
+          Nothing -> NoReg
     filterTrivial ins = case ins of
       Mid (QCopy a1 a2) -> a1 /= a2
       _ -> True

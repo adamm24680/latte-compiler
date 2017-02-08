@@ -1,11 +1,12 @@
-{-# LANGUAGE GADTs, ScopedTypeVariables #-}
+{-# LANGUAGE GADTs, ScopedTypeVariables, FlexibleInstances #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 module Liveness (computeLiveRanges, livenessAnn, LiveAnnotated(..),
     mkLiveAnnotated, LiveVars, LiveRanges, getLiveStarts, getLiveEnd)
   where
 
 import AbsLatte (Ident)
-import IR ( Quad(..), Operand(..), BinOp(..), CompOp(..), QFunDef(..))
+import IR ( Quad(..), Operand(..), BinOp(..), CompOp(..), QFunDef(..),
+  ShowLinRepr(..))
 import Compiler.Hoopl
 import Data.Maybe
 import qualified Data.Map as Map
@@ -56,8 +57,8 @@ liveTransfer = mkBTransfer tr
       QGoto l -> factL f l
       QGotoBool r l1 l2 -> addUse r $ factL f l1 `Set.union` factL f l2
       QParam r -> addUse r f
-      QCall _ _ -> f
-      QCallExternal _ _ -> f
+      QCall d _ -> delUse d f
+      QCallExternal d _ -> delUse d f
       QVRet -> fact_bot liveLattice
       QRet r -> addUse r $ fact_bot liveLattice
       QAlloca d -> delUse d f
@@ -120,6 +121,9 @@ livenessAnn (QFunDef ident type_ (l, graph) params) =
     (newgraph, _, _) = runSimpleUniqueMonad $
       (runWithFuel :: Monad m => Fuel -> InfiniteFuelMonad m a -> m a) infiniteFuel $
         analyzeAndRewriteBwd deadElimPass (JustC [l]) graph2 mapEmpty
+
+instance ShowLinRepr (Label, Graph LiveAnnotated C C) where
+  showlr (_,g) = showGraph show g
 
 type LiveStart = Map.Map Int [Operand]
 type LiveEnd = Map.Map Operand Int
