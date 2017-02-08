@@ -131,7 +131,7 @@ emitCallExternal str = do
 
 emitWrite :: Operand -> Int -> Operand -> GenM ()
 emitWrite base offset value = do
-  dest <- emitBin QBinOp QAdd base (LitInt . toInteger $(4*offset))
+  dest <- emitBin QBinOp QAdd base (LitInt . toInteger $(offset))
   emit $ QStore dest value
 
 

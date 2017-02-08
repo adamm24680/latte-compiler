@@ -28,12 +28,12 @@ genIR p = do
   let out2 = unlines $ map show l3
   let out3 = unlines $ l4
   --let out3 = unlines $ take 1 $ map (concatMap show) l5
-  putStrLn out
+  {-putStrLn out
   putStrLn "==============="
   putStrLn out1
   putStrLn "==============="
   putStrLn out2
-  putStrLn "==============="
+  putStrLn "==============="-}
   putStrLn out3
   return l
 
@@ -45,7 +45,7 @@ process s = case getRepr s of
             putStrLn e
             exitFailure
           Right tree -> do
-            print tree
+            --print tree
             genIR tree
             exitSuccess
 
