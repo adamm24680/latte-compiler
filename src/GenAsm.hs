@@ -100,7 +100,6 @@ genQ (Mid q) = case q of
             emit $ Idiv $ PEAddress $ AReg esp
             emit $ Add esp $ PImm 4
           _ -> emit $ Idiv s2
-        emit $ Idiv s2
         emit $ Pop edx
       QMod -> do
         emit $ Push edx

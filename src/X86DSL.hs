@@ -39,7 +39,7 @@ data X86Op = PReg X86Reg | PImm Int | PEAddress X86Address |
 instance Show X86Op where
   show (PReg r) = show r
   show (PImm i) = "dword " ++ show i
-  show (PEAddress a) = "["++show a++"]"
+  show (PEAddress a) = "dword ["++show a++"]"
   show (PLabel l) = show l
   show NoX86Reg = "__noreg__"
 
