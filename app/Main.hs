@@ -55,7 +55,6 @@ process name dir s =
       callCommand $ unwords ["nasm", "-f", "elf32", "-o",  outputObjFn, outputFn]
       callCommand $
         unwords ["gcc", "-m32", "-o",  outputExeFn, outputObjFn, "lib/runtime.o"]
-      putStrLn $ "wrote " ++ (dir </> name <.> "bc")
       exitSuccess
 
 main :: IO ()

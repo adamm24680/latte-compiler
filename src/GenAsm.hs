@@ -84,11 +84,22 @@ genQ (Mid q) = case q of
         emit $ Sub eax s2
       QMul -> do
         emit $ Push edx
-        emit $ Imul s2
+        case s2 of -- cannot multiply by immediate
+          PImm _ -> do
+            emit $ Push s2
+            emit $ Imul $ PEAddress $ AReg esp
+            emit $ Add esp $ PImm 4
+          _ -> emit $ Imul s2
         emit $ Pop edx
       QDiv -> do
         emit $ Push edx
         emit $ Mov edx $ PImm 0
+        case s2 of -- cannot divide by immediate
+          PImm _ -> do
+            emit $ Push s2
+            emit $ Idiv $ PEAddress $ AReg esp
+            emit $ Add esp $ PImm 4
+          _ -> emit $ Idiv s2
         emit $ Idiv s2
         emit $ Pop edx
       QMod -> do
