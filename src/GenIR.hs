@@ -21,14 +21,22 @@ import Data.Dynamic
 
 data VarLoc = Stack Operand | Param Int
 
+newtype IsPredef = IsPredef Bool
+
 data GenState = GenState {
   uniqueC :: Unique,
   regCounter:: Integer
   }
 
+data FunInfo  = FunInfo {
+  funIdent :: Ident,
+  funType :: Type,
+  isPredef :: Bool
+}
+
 data GenEnv = GenEnv {
   varInfo :: Map.Map Ident (VarLoc, Type),
-  funInfo :: Map.Map Ident Type}
+  funInfo :: Map.Map Ident FunInfo}
 
 type GenM = RWS GenEnv [Dynamic] GenState
 
@@ -47,9 +55,9 @@ newEnv :: GenEnv
 newEnv =
   GenEnv { varInfo = Map.empty, funInfo = Map.empty}
 
-insertFunType :: GenEnv -> (Ident, Type) -> GenEnv
-insertFunType env (ident, t) =
-  env{funInfo = Map.insert ident t $ funInfo env}
+insertFunInfo :: GenEnv -> FunInfo -> GenEnv
+insertFunInfo env info =
+  env{funInfo = Map.insert (funIdent info) info $ funInfo env}
 
 getVarLoc :: Ident -> GenM VarLoc
 getVarLoc ident = do
@@ -67,6 +75,13 @@ getVarType ident = do
 
 getFunType :: Ident -> GenM Type
 getFunType ident = do
+  env <- ask
+  case Map.lookup ident $ funInfo env of
+    Just x -> return $ funType x
+    Nothing -> fail $ printf "internal error: function %s not found" ident
+
+getFunInfo :: Ident -> GenM FunInfo
+getFunInfo ident = do
   env <- ask
   case Map.lookup ident $ funInfo env of
     Just x -> return x
@@ -183,6 +198,15 @@ storeVar ident val = do
     Param _ -> fail "internal error: assignment to parameter"
 
 
+genCall :: Ident -> GenM Operand
+genCall ident = do
+  info <- getFunInfo ident
+  if isPredef info then
+    let Ident s = ident
+    in emitCallExternal s
+  else
+    emitCall ident
+
 genDecl :: Type -> Item -> GenM GenEnv
 genDecl type_ item = do
   env <- ask
@@ -229,7 +253,7 @@ genExpr x = case x of
   EApp ident exprs -> do
     vs <- mapM genExpr exprs
     mapM_ emitParam vs
-    emitCall ident
+    genCall ident
   EString string -> do
     emitParam $ LitInt . toInteger $ (length string + 1)
     emitParam $ LitInt 4
@@ -412,10 +436,12 @@ makeBlock l =
       (QLabel label) = entry
   in (label, mkFirst entry H.<*> mkMiddles middle H.<*> mkLast exit)
 
-funType :: TopDef -> (Ident, Type)
-funType x = case x of
-  FnDef t ident args _ ->
-    (ident, Fun t $ map (\(Arg t _) -> t) args)
+makeFunInfo :: Bool -> TopDef -> FunInfo
+makeFunInfo ispredef x = case x of
+  FnDef t ident args _ -> FunInfo {
+    funIdent = ident,
+    funType = Fun t $ map (\(Arg t _) -> t) args,
+    isPredef = ispredef}
 
 makeFun :: GenEnv -> Type -> Ident -> [Arg] -> GenM a ->
   QFunDef (Label, Graph (Quad Operand) C C)
@@ -439,76 +465,7 @@ checkIfZero reg = do
   emit QError
   emitLabel l2
 
-predefPrintInt :: QFunDef (Label, Graph (Quad Operand) C C)
-predefPrintInt =
-  let
-    parm = Ident "i"
-    code = do
-      label <- freshLabel
-      emitLabel label
-      x <- loadVar parm
-      form <- genExpr $ EString "%d"
-      emitParam form
-      emitParam x
-      emitCallExternal "printf"
-      emitParam form
-      emitCallExternal "free"
-      emit QVRet
-  in makeFun newEnv Void (Ident "printInt") [Arg Int parm] code
 
-predefPrintString :: QFunDef (Label, Graph (Quad Operand) C C)
-predefPrintString =
-  let
-    parm = Ident "s"
-    code = do
-      label <- freshLabel
-      emitLabel label
-      x <- loadVar parm
-      emitParam x
-      emitCallExternal "puts"
-      emit QVRet
-  in makeFun newEnv Void (Ident "printString") [Arg Str parm] code
-
-predefReadInt :: QFunDef (Label, Graph (Quad Operand) C C)
-predefReadInt =
-  let
-    code = do
-      label <- freshLabel
-      emitLabel label
-      x <- emitAlloca
-      form <- genExpr $ EString "%d"
-      emitParam form
-      emitParam x
-      read_ <- emitCallExternal "scanf"
-      emitParam form
-      emitCallExternal "free"
-      checkIfZero read_
-      res <- emitLoad x
-      emit $ QRet res
-  in makeFun newEnv Int (Ident "readInt") [] code
-
-predefReadString :: QFunDef (Label, Graph (Quad Operand) C C)
-predefReadString =
-  let
-    code = do
-      label <- freshLabel
-      emitLabel label
-      emitParam $ LitInt 256
-      dest <- emitCallExternal "malloc"
-      emitParam dest
-      res <- emitCallExternal "gets"
-      checkIfZero res
-      emit $ QRet res
-  in makeFun newEnv Str (Ident "readString") [] code
-
-predefError :: QFunDef (Label, Graph (Quad Operand) C C)
-predefError =
-  let {code = do
-    label <- freshLabel
-    emitLabel label
-    emit QError
-  }
-  in makeFun newEnv Void (Ident "error") [] code
 
 genFun :: GenEnv -> TopDef -> QFunDef (Label, Graph (Quad Operand) C C)
 genFun initEnv (FnDef type_ ident args block) =
@@ -521,11 +478,10 @@ genFun initEnv (FnDef type_ ident args block) =
 
 genProgram :: Program -> [QFunDef (Label, Graph (Quad Operand) C C)]
 genProgram (Program topdefs) =
-  let defs = topdefs ++ Frontend.predefs
-      initEnv = foldl insertFunType newEnv $ map funType defs
-  in map (genFun initEnv) topdefs ++
-    [predefPrintInt, predefPrintString, predefError,
-      predefReadString, predefReadInt]
+  let predefinfos = map (makeFunInfo True) Frontend.predefs
+      infos = map (makeFunInfo False) topdefs
+      initEnv = foldl insertFunInfo newEnv $ infos ++ predefinfos
+  in map (genFun initEnv) topdefs
 
 instance ShowLinRepr (Label, Graph (Quad Operand) C C) where
   showlr (_, g) = showGraph show g

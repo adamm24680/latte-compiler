@@ -1,5 +1,5 @@
 int main() {
-	int n = 0;
+	int n = 8;
 	while (n > 0) {
 		n--;
 		printInt(n);
