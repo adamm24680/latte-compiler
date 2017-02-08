@@ -164,6 +164,7 @@ genQ (Mid q) = case q of
       forM_ ps $ \op -> emit $ Push op
       modify $ \st -> st{params = []}
       emit $ Call $ PLabel lbl
+      emit $ Add esp $ PImm (4* length ps)
       emit $ Pop edx
       emit $ Pop ecx
       emit $ Mov d eax
