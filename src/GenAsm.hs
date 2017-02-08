@@ -177,7 +177,7 @@ genQ (Lst q) = case q of
     emit $ Jmp $ PLabel exitLabel
   QGotoBool r l1 l2 -> do
     emit $ Cmp r $ PImm 0
-    emit $ Jz $ PLabel $ toX86Label l1
+    emit $ Jnz $ PLabel $ toX86Label l1
     emit $ Jmp $ PLabel $ toX86Label l2
   QVRet -> emit $ Jmp $ PLabel exitLabel
   QError -> emit $ Call $ PLabel $ X86Label "abort"
