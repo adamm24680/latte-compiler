@@ -5,9 +5,9 @@ description:         Please see README.md
 homepage:            https://github.com/githubuser/latc#readme
 license:             BSD3
 license-file:        LICENSE
-author:              Author name here
-maintainer:          example@example.com
-copyright:           2016 Author name here
+author:              Adam Markiewicz
+maintainer:          adamm24680@gmail.com
+copyright:           2016 Adam Markiewicz
 category:            Web
 build-type:          Simple
 extra-source-files:  {}
@@ -37,7 +37,7 @@ library
                      , containers
   default-language:    Haskell2010
 
-executable latc-exe
+executable latc_x86
   hs-source-dirs:      app
                      , grammar
   main-is:             Main.hs
@@ -62,4 +62,4 @@ test-suite latc-test
 
 source-repository head
   type:     git
-  location: https://github.com/githubuser/latc
+  location: https://github.com/adamm24680/latte-compiler.git

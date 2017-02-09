@@ -10,6 +10,7 @@ import AbsLatte
 import Control.Monad
 import Text.Printf
 
+
 data FunType = FunType Type [Type] deriving (Eq)
 
 type VarContext = Map.Map Ident (Type, Bool)
