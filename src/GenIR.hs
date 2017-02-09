@@ -16,6 +16,7 @@ import Compiler.Hoopl (Label, UniqueMonad, Unique,
   mkFirst, mkLast, mkMiddles, emptyClosedGraph, showGraph)
 import qualified Compiler.Hoopl as H ((<*>))
 import Data.Maybe
+import qualified Frontend -- for printfArg instance
 
 
 data VarLoc = Stack Operand | Param Int

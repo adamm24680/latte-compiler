@@ -8,11 +8,11 @@ import qualified Data.Map as Map
 import Text.Printf
 import Compiler.Hoopl (Label, C, O, NonLocal(..), Graph, showGraph, HooplNode(..))
 import AbsLatte
+import qualified Frontend -- for PrintfArg instance
 
 
-
-instance PrintfArg Ident where
-  formatArg (Ident s) _ = showString s
+--instance PrintfArg Ident where
+--  formatArg (Ident s) _ = showString s
 
 data Operand = Reg String
   | LitInt Integer
