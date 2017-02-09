@@ -238,7 +238,7 @@ genNasmRepr funlist = [sectdecl, globdecl, extdecl] ++ inslist
     globdecl = "    global main"
     sectdecl = "section .text"
     generated = reverse $ instrs res
-    rewrites1 = [elimNop, elimMov]
+    rewrites1 = [elimNop, elimMov, elimAdd0]
     rewrites2 = [elimMov2]
     rewrites3 = []
     optimized = peepholeOpt rewrites1 rewrites2 rewrites3 generated []
@@ -290,4 +290,11 @@ elimMov2 i = case i of
       Just [Mov a1 b1]
     else
       Nothing
+  _ -> Nothing
+
+elimAdd0 i = case i of
+  Add _ (PImm 0) -> Just []
+  Add (PImm 0) _ -> Just []
+  Sub _ (PImm 0) -> Just []
+  Sub (PImm 0) _ -> Just []
   _ -> Nothing
