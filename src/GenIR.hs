@@ -316,7 +316,7 @@ genExpr x = case x of
     emit $ QGotoBool e1 l2 l1
     emitLabel l1
     e2 <- genExpr expr2
-    emit $ QAnd e1 e1 e2
+    emit $ QOr e1 e1 e2
     emit $ QGoto l2
     emitLabel l2
     return  e1
