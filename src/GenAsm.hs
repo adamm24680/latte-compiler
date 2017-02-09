@@ -237,10 +237,11 @@ genNasmRepr funlist = [sectdecl, globdecl, extdecl] ++ reverse inslist
     extdecl = "    extern "++ intercalate "," (Set.toList extrs)
     globdecl = "    global main"
     sectdecl = "section .text"
+    generated = reverse $ instrs res
     rewrites1 = [elimNop, elimMov]
     rewrites2 = [elimMov2]
     rewrites3 = []
-    optimized = peepholeOpt rewrites1 rewrites2 rewrites3 (instrs res) []
+    optimized = peepholeOpt rewrites1 rewrites2 rewrites3 generated []
     inslist = map show optimized
 
 
