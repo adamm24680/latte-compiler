@@ -239,7 +239,7 @@ genNasmRepr funlist = [sectdecl, globdecl, extdecl] ++ inslist
     sectdecl = "section .text"
     generated = reverse $ instrs res
     rewrites1 = [elimNop, elimMov, elimAdd0]
-    rewrites2 = [elimMov2]
+    rewrites2 = [elimMov2, jmpElim]
     rewrites3 = []
     optimized = peepholeOpt rewrites1 rewrites2 rewrites3 generated []
     inslist = map show optimized
@@ -297,4 +297,9 @@ elimAdd0 i = case i of
   Add (PImm 0) _ -> Just []
   Sub _ (PImm 0) -> Just []
   Sub (PImm 0) _ -> Just []
+  _ -> Nothing
+
+jmpElim i = case i of
+  (Jmp (PLabel l1), Label l2) ->
+    if l1 == l2 then Just [Label l2] else Nothing
   _ -> Nothing
