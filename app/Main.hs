@@ -1,7 +1,7 @@
 module Main where
 
-import System.IO ( stdin, hGetContents, hPutStrLn, stderr )
-import System.Environment ( getArgs, getProgName )
+import System.IO ( hPutStrLn, stderr )
+import System.Environment ( getArgs)
 import System.Exit ( exitFailure, exitSuccess )
 import System.FilePath
 import System.Directory
@@ -12,7 +12,6 @@ import System.Process(callCommand)
 import Text.Printf
 
 import Frontend
-import IR
 import GenIR
 import Opt
 import Liveness

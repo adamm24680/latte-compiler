@@ -27,7 +27,7 @@ errToBool (Bad _) = False
 
 
 checkVarBlockDecl :: Env -> Ident -> Bool
-checkVarBlockDecl (_, h:t) ident =
+checkVarBlockDecl (_, h:_) ident =
   case Map.lookup ident h of
     Just _ -> True
     Nothing -> False
@@ -79,7 +79,7 @@ checkExpr env typ expr = do
 inferExpr :: Env -> Expr -> Err Type
 inferExpr env x = case x of
   EVar ident ->  fst <$> getVarType env ident
-  ELitInt integer -> return Int
+  ELitInt _ -> return Int
   ELitTrue -> return Bool
   ELitFalse -> return Bool
   EApp ident exprs -> do
@@ -89,7 +89,7 @@ inferExpr env x = case x of
         "incorrect number of parameters in %s" (printTree x)
     zipWithM_ (checkExpr env) params exprs
     return ret
-  EString string -> return Str
+  EString _ -> return Str
   Neg expr -> checkExpr env Int expr >> return Int
   Not expr -> checkExpr env Bool expr >> return Bool
   EMul expr1 mulop expr2 ->

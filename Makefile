@@ -1,3 +1,5 @@
+all: latc_x86
+
 lib/runtime.o: lib/runtime.c
 	gcc -m32 -c -o lib/runtime.o lib/runtime.s
 
@@ -9,4 +11,3 @@ latc_x86: grammar/AbsLatte.hs grammar/ErrM.hs grammar/LexLatte.x grammar/ParLatt
 	stack install
 	mv ~/.local/bin/latc_x86 .
 
-all: latc_x86
