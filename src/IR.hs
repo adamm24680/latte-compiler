@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleInstances, GADTs, StandaloneDeriving, UndecidableInstances #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
-module IR (Operand(..), Label, Quad(..), BinOp(..),
+module IR (Operand(..), Label, Quad(..), BinOp(..), PackIns(..),
     CompOp(..), QFunDef(..), qmap, Ins(..), ShowLinRepr(..), Ident(..))
   where
 
@@ -79,6 +79,16 @@ data Ins t =
   Mid (Quad t O O) |
   Lst (Quad t O C)
 
+class PackIns q where
+  packIns :: q -> Ins Operand
+instance PackIns (Quad Operand C O) where
+  packIns = Fst
+instance PackIns (Quad Operand O O) where
+  packIns = Mid
+instance PackIns (Quad Operand O C) where
+  packIns = Lst
+
+
 deriving instance Eq t => Eq (Ins t)
 
 instance PrintfArg t => Show (Ins t) where
@@ -152,7 +162,6 @@ qmap f q = case q of
   QLoadParam d i -> QLoadParam (f d) i
 
 data QFunDef t = QFunDef Ident Type t Integer
-
 
 class ShowLinRepr t where
   showlr :: t -> String

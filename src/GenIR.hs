@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, GADTs #-}
+{-# LANGUAGE FlexibleInstances, GADTs, FlexibleContexts #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 module GenIR
   (QFunDef(..), genProgram)
@@ -16,7 +16,6 @@ import Compiler.Hoopl (Label, UniqueMonad, Unique,
   mkFirst, mkLast, mkMiddles, emptyClosedGraph, showGraph)
 import qualified Compiler.Hoopl as H ((<*>))
 import Data.Maybe
-import Data.Dynamic
 
 
 data VarLoc = Stack Operand | Param Int
@@ -38,7 +37,7 @@ data GenEnv = GenEnv {
   varInfo :: Map.Map Ident (VarLoc, Type),
   funInfo :: Map.Map Ident FunInfo}
 
-type GenM = RWS GenEnv [Dynamic] GenState
+type GenM = RWS GenEnv [Ins Operand] GenState
 
 instance UniqueMonad GenM where
   freshUnique = do
@@ -92,8 +91,8 @@ insertVar ident varloc type_ env =
   env{varInfo = Map.insert ident (varloc, type_) (varInfo env)}
 
 
-emit :: (Typeable e, Typeable x) => Quad Operand e x -> GenM ()
-emit a = tell [toDyn a]
+emit :: PackIns (Quad Operand e x) => Quad Operand e x -> GenM ()
+emit a = tell [packIns a]
 
 emitBin :: (Operand -> a -> Operand -> Operand -> Quad Operand O O) -> a ->
   Operand -> Operand -> GenM Operand
@@ -436,24 +435,28 @@ genStmt x = case x of
     genExpr expr
     ask
 
-splitBlocks :: [Dynamic] -> [[Dynamic]]
+splitBlocks :: [Ins Operand] -> [[Ins Operand]]
 splitBlocks list =
   let {
     splt l cur acc =
       case l of
-        h : t -> case (fromDynamic :: Dynamic -> Maybe (Quad Operand C O)) h of
-          Just _ -> splt t [h] (reverse cur : acc)
-          Nothing -> splt t (h: cur) acc
+        h : t -> case h of
+          Fst _ -> splt t [h] (reverse cur : acc)
+          _ -> splt t (h: cur) acc
         [] -> reverse acc ++ [reverse cur]}
   in tail $ splt list [] []
 
-makeBlock :: [Dynamic] -> (Label, Graph (Quad Operand) C C)
+makeBlock :: [Ins Operand] -> (Label, Graph (Quad Operand) C C)
 makeBlock l =
-  let flt fun = map fromJust . filter (Nothing /=) . map fun
-      entry = head . flt (fromDynamic :: Dynamic -> Maybe (Quad Operand C O)) $ l
-      exit =  head . flt (fromDynamic :: Dynamic -> Maybe (Quad Operand O C)) $ l
-      --exit = QError
-      middle = flt (fromDynamic :: Dynamic -> Maybe (Quad Operand O O)) l
+  let fltFst (Fst _) = True
+      fltFst _ = False
+      fltMid (Mid _) = True
+      fltMid _ = False
+      fltLst (Lst _) = True
+      fltLst _ = False
+      Fst entry = head $ filter fltFst l
+      Lst exit = head $ filter fltLst l
+      middle = map (\(Mid x) -> x) $ filter fltMid l
       (QLabel label) = entry
   in (label, mkFirst entry H.<*> mkMiddles middle H.<*> mkLast exit)
 
