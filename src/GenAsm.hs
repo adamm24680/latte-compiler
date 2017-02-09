@@ -57,7 +57,7 @@ convOp :: PhysOp X86Reg -> X86Op
 convOp pr = case pr of
   PhysReg reg -> PReg reg
   Constant i -> PImm $ fromInteger i
-  StackSlot i -> PEAddress $ AOff ebp i
+  StackSlot i -> PEAddress $ AOff ebp (-4 * (i+1))
   NoReg -> NoX86Reg
 
 toX86Label :: Label -> X86Label
