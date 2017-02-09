@@ -211,7 +211,7 @@ genDecl :: Type -> Item -> GenM GenEnv
 genDecl type_ item = do
   env <- ask
   let {(e, ident) = case item of
-    NoInit ident -> (default_ type_, ident)
+    NoInit ident -> (fromJust $ defaultValue type_, ident)
     Init ident expr -> (expr, ident)}
   uniq <- freshUnique
   let (Ident s) = ident
@@ -221,11 +221,13 @@ genDecl type_ item = do
   --emitStore new r
   emit $ QCopy new r
   return $ insertVar ident loc type_ env
-  where {default_ t = case t of
-    Int -> ELitInt 0
-    Bool -> ELitFalse
-    Str -> EString ""
-    _ -> error "declared variable with function type"}
+
+defaultValue :: Type -> Maybe Expr
+defaultValue t = case t of
+  Int -> Just $ ELitInt 0
+  Bool ->Just ELitFalse
+  Str -> Just $ EString ""
+  _ -> Nothing
 
 inferExpr :: Expr -> GenM Type
 inferExpr x = case x of
@@ -492,7 +494,11 @@ genFun initEnv (FnDef type_ ident args block) =
     label <- freshLabel
     emitLabel label
     genStmt $ BStmt block
-    emit QError}
+    case defaultValue type_ of
+      Just expr -> do
+        e <- genExpr expr
+        emit $ QRet e
+      Nothing -> emit $ QVRet}
   in makeFun initEnv type_ ident args gen
 
 genProgram :: Program -> [QFunDef (Label, Graph (Quad Operand) C C)]
