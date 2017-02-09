@@ -257,13 +257,13 @@ peepholeOpt r1 r2 r3 insns acc = case insns of
     Nothing -> peepholeOpt r1 r2 r3 t (h:acc)
   where
     apply1 r l = case l of
-      [h1] -> fmap (++ l) (r h1)
+      h1:t -> fmap (++ t) (r h1)
       _ -> Nothing
     apply2 r l = case l of
-      [h1,h2] -> fmap (++ l) (r (h1, h2))
+      h1:h2:t -> fmap (++ t) (r (h1, h2))
       _ -> Nothing
     apply3 r l = case l of
-      [h1,h2,h3] -> fmap (++ l) (r (h1, h2, h3))
+      h1:h2:h3:t -> fmap (++ t) (r (h1, h2, h3))
       _ -> Nothing
     rewrites1 = map apply1 r1
     rewrites2 = map apply2 r2
