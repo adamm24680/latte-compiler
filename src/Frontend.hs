@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 module Frontend
   (getRepr, Err, Program, predefs)
     where
@@ -15,24 +16,29 @@ data FunType = FunType Type [Type] deriving (Eq)
 
 type VarContext = Map.Map Ident (Type, Bool)
 type FunContext = Map.Map Ident FunType
-type Env = (FunContext, [VarContext])
+type TypeInfo = Type -> [(Ident, Type)]
+
+type Env = (FunContext, [VarContext], TypeInfo)
 
 
 instance PrintfArg Ident where
   formatArg (Ident s) _ = showString s
 
+
 errToBool :: Err a -> Bool
 errToBool (Ok _) = True
 errToBool (Bad _) = False
 
+basicTypeInfo (Array _) = [(Ident "length", Int)]
+basicTypeInfo _ = []
 
 checkVarBlockDecl :: Env -> Ident -> Bool
-checkVarBlockDecl (_, h:_) ident =
+checkVarBlockDecl (_, h:_, _) ident =
   case Map.lookup ident h of
     Just _ -> True
     Nothing -> False
 getVarType :: Env -> Ident -> Err (Type, Bool)
-getVarType (_, ctx) ident =
+getVarType (_, ctx, _) ident =
   fnd ctx where
     fnd l = case l of
       t:tt -> case Map.lookup ident t of
@@ -40,24 +46,30 @@ getVarType (_, ctx) ident =
         Nothing -> fnd tt
       [] -> fail $ printf "undeclared variable %s" ident
 getFunType :: Env -> Ident -> Err FunType
-getFunType (ctx, _) ident =
+getFunType (ctx, _, _) ident =
   case Map.lookup ident ctx of
     Just x -> return x
     Nothing -> fail $ printf "undeclared function %s" ident
 updateVarType :: Env -> Ident -> (Type, Bool) -> Err Env
-updateVarType (x, t:tt) ident typ =
-  return (x, Map.insert ident typ t : tt)
+updateVarType (x, t:tt, ti) ident typ =
+  return (x, Map.insert ident typ t : tt, ti)
 updateFunType :: Env -> Ident -> FunType -> Err Env
-updateFunType (x, ctx) ident typ =
+updateFunType (x, ctx, ti) ident typ =
   case Map.insertLookupWithKey f1 ident typ x of
-    (Nothing, r) -> return (r, ctx)
+    (Nothing, r) -> return (r, ctx, ti)
     (Just _, _) -> fail $ printf "function %s redefined" ident
   where f1 _ _ a = a
 enterBlock:: Env -> Env
-enterBlock (x, ctx) = (x, Map.empty : ctx)
+enterBlock (x, ctx, ti) = (x, Map.empty : ctx, ti)
 emptyEnv :: Env
-emptyEnv = (Map.empty, [Map.empty])
+emptyEnv = (Map.empty, [Map.empty], basicTypeInfo)
 
+lookupFieldType :: Env -> Type -> Ident -> Err Type
+lookupFieldType (_,_, ti) type_ ident =
+  case lookup ident $ ti type_ of
+    Just t -> return t
+    Nothing -> fail $
+      printf "objects of type %s don't have a field named %s" (show type_) ident
 
 concatErrors :: [Err a] -> Err ()
 concatErrors x = case x of
@@ -110,12 +122,26 @@ inferExpr env x = case x of
   EAnd expr1 expr2 ->
     checkTwo Bool expr1 expr2 >> return Bool
   EOr expr1 expr2 -> inferExpr env (EAnd expr1 expr2)
+  EField ident1 ident2 -> do
+    t1 <- fst <$> getVarType env ident1
+    lookupFieldType env t1 ident2
+  EAccess ident expr -> do
+    checkExpr env Int expr
+    t1 <- fst <$> getVarType env ident
+    case t1 of
+      Array t -> return t
+      _ -> fail $ printf "%s is not an array" ident
+  ECreate type_ expr -> do
+    checkExpr env Int expr
+    return $ Array type_
   where
     checkTwo type_ expr1 expr2 =
       checkExpr env type_ expr1 >> checkExpr env type_ expr2
     checkSame expr1 expr2 = do
       t1 <- inferExpr env expr1
       checkExpr env t1 expr2
+
+
 
 checkStmts :: Env -> Type -> [Stmt] -> Err Env
 checkStmts env rettype =

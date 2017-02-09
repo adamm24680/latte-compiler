@@ -46,6 +46,8 @@ CondElse.  Stmt ::= "if" "(" Expr ")" Stmt "else" Stmt  ;
 
 While.     Stmt ::= "while" "(" Expr ")" Stmt ;
 
+For.       Stmt ::= "for" "(" Type Ident ":" Expr ")" Stmt;
+
 SExp.      Stmt ::= Expr  ";" ;
 
 -- Types ---------------------------------------------------
@@ -78,7 +80,11 @@ EApp.      Expr6 ::= Ident "(" [Expr] ")" ;
 
 EString.   Expr6 ::= String ;
 
-EAccess.   Expr6 ::= Ident "." Ident;
+EField.    Expr6 ::= Ident "." Ident;
+
+EAccess.   Expr6 ::= Ident "[" Expr "]";
+
+ECreate.   Expr6 ::= "new" Type "[" Expr "]";
 
 Neg.       Expr5 ::= "-" Expr6 ;
 
