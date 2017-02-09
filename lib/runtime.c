@@ -16,7 +16,7 @@ void error() {
 }
 int readInt() {
   int k;
-  int num = scanf("%d", &k);
+  int num = scanf("%d\n", &k);
   if (num ==1)
       return k;
   else {

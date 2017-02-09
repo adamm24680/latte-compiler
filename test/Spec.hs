@@ -7,11 +7,11 @@ main :: IO ()
 main = core
 
 core :: IO ()
-core = forM_ [1..18] (testCase "lattests/good/core")
+core = forM_ [1..22] (testCase "lattests/good/core")
 
 testCase :: String -> Int -> IO ()
-testCase name i = do
-  let name = printf "%s%03d" name i
+testCase base i = do
+  let name = printf "%s%03d" base i
   let inputName = name ++ ".input"
   let latFileName = name ++ ".lat"
   let outputName = name ++ ".output"
@@ -23,4 +23,4 @@ testCase name i = do
     callCommand $ printf "%s > out" name
   in1 <- readFile "out"
   in2 <- readFile outputName
-  unless (in1 == in2) $ print ("test " ++ show i ++ " failed")
+  unless (in1 == in2) $ putStrLn ("test " ++ show i ++ " failed\n"++ (unlines $ map show $ zip (lines in1) (lines in2)))
