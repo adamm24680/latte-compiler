@@ -39,7 +39,7 @@ instance Show (PhysOp X86Reg) where
 
 emit :: X86Ins -> GenM ()
 emit ins =
-  modify $ \s -> s{instrs = ins : instrs s}
+  modify $ \s -> s{instrs = elimNoReg ins : instrs s}
 
 newLabel :: GenM X86Label
 newLabel = do
@@ -237,4 +237,44 @@ genNasmRepr funlist = [sectdecl, globdecl, extdecl] ++ reverse inslist
     extdecl = "    extern "++ intercalate "," (Set.toList extrs)
     globdecl = "    global main"
     sectdecl = "section .text"
-    inslist = map show $ map elimNoReg $ instrs res
+    rewrites1 = [elimNop]
+    rewrites2 = []
+    rewrites3 = []
+    optimized = peepholeOpt rewrites1 rewrites2 rewrites3 (instrs res) []
+    inslist = map show optimized
+
+
+type Rewrite1 = X86Ins -> Maybe [X86Ins]
+type Rewrite2 = (X86Ins, X86Ins) -> Maybe [X86Ins]
+type Rewrite3 = (X86Ins, X86Ins, X86Ins) -> Maybe [X86Ins]
+
+peepholeOpt :: [Rewrite1] -> [Rewrite2] -> [Rewrite3] ->
+  [X86Ins] -> [X86Ins] -> [X86Ins]
+peepholeOpt r1 r2 r3 insns acc = case insns of
+  [] -> reverse acc
+  (h:t) -> case applyUntil (rewrites1 ++ rewrites2 ++ rewrites3) insns of
+    Just res -> peepholeOpt r1 r2 r3 res acc
+    Nothing -> peepholeOpt r1 r2 r3 t (h:acc)
+  where
+    apply1 r l = case l of
+      [h1] -> fmap (++ l) (r h1)
+      _ -> Nothing
+    apply2 r l = case l of
+      [h1,h2] -> fmap (++ l) (r (h1, h2))
+      _ -> Nothing
+    apply3 r l = case l of
+      [h1,h2,h3] -> fmap (++ l) (r (h1, h2, h3))
+      _ -> Nothing
+    rewrites1 = map apply1 r1
+    rewrites2 = map apply2 r2
+    rewrites3 = map apply3 r3
+    applyUntil :: [[X86Ins] ->
+      Maybe [X86Ins]] -> [X86Ins] -> Maybe [X86Ins]
+    applyUntil [] l = Nothing
+    applyUntil (r:t) l = case r l of
+      Just l2 -> Just l2
+      Nothing -> applyUntil t l
+
+elimNop i = case i of
+  Nop -> Just []
+  _ -> Nothing
