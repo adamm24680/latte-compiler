@@ -28,7 +28,8 @@ int readInt() {
 char* readString() {
   static char k[BUFSIZE];
   fgets(k, BUFSIZE, stdin);
-  size_t len = strlen(k);
-  char* new = malloc(len+1);
+  size_t len1 = strlen(k) -1;
+  k[len1] = '\0';
+  char* new = malloc(len1+1);
   return strcpy(new, k);
 }
