@@ -8,6 +8,7 @@ import ParLatte
 import PrintLatte
 import AbsLatte
 import Control.Monad
+import Text.Printf
 
 data FunType = FunType Type [Type] deriving (Eq)
 
@@ -15,6 +16,9 @@ type VarContext = Map.Map Ident (Type, Bool)
 type FunContext = Map.Map Ident FunType
 type Env = (FunContext, [VarContext])
 
+
+instance PrintfArg Ident where
+  formatArg (Ident s) _ = showString s
 
 errToBool :: Err a -> Bool
 errToBool (Ok _) = True
@@ -33,12 +37,12 @@ getVarType (_, ctx) ident =
       t:tt -> case Map.lookup ident t of
         Just x -> return x
         Nothing -> fnd tt
-      [] -> fail $ "undeclared variable " ++ show ident
+      [] -> fail $ printf "undeclared variable %s" ident
 getFunType :: Env -> Ident -> Err FunType
 getFunType (ctx, _) ident =
   case Map.lookup ident ctx of
     Just x -> return x
-    Nothing -> fail $ "undeclared function " ++ show ident
+    Nothing -> fail $ printf "undeclared function %s" ident
 updateVarType :: Env -> Ident -> (Type, Bool) -> Err Env
 updateVarType (x, t:tt) ident typ =
   return (x, Map.insert ident typ t : tt)
@@ -46,7 +50,7 @@ updateFunType :: Env -> Ident -> FunType -> Err Env
 updateFunType (x, ctx) ident typ =
   case Map.insertLookupWithKey f1 ident typ x of
     (Nothing, r) -> return (r, ctx)
-    (Just _, _) -> fail $ "function redefinition: " ++ show ident
+    (Just _, _) -> fail $ printf "function %s redefined" ident
   where f1 _ _ a = a
 enterBlock:: Env -> Env
 enterBlock (x, ctx) = (x, Map.empty : ctx)
@@ -68,9 +72,8 @@ checkExpr env typ expr = do
   typ2 <- inferExpr env expr
   unless (typ2 == typ) $
     fail $
-      "type of " ++
-        printTree expr ++
-          " expected " ++ printTree typ ++ " but found " ++ printTree typ2
+      printf "type of %s : expected %s but found %s"
+        (printTree expr)  (printTree typ)  (printTree typ2)
 
 inferExpr :: Env -> Expr -> Err Type
 inferExpr env x = case x of
@@ -81,8 +84,8 @@ inferExpr env x = case x of
   EApp ident exprs -> do
     (FunType ret params) <- getFunType env ident
     unless (length params == length exprs) $
-      fail $
-        "incorrect number of parameters in " ++ printTree x
+      fail $ printf
+        "incorrect number of parameters in %s" (printTree x)
     zipWithM_ (checkExpr env) params exprs
     return ret
   EString string -> return Str
@@ -96,7 +99,7 @@ inferExpr env x = case x of
       t1 <- inferExpr env expr1
       t2 <- inferExpr env expr2
       when (t1 /= t2 || t1 /= Str && t1 /= Int)
-        (fail $ "invalid operands in " ++ printTree x)
+        (fail $ printf "invalid operands in %s" $ printTree x)
       return t1
   ERel expr1 relop expr2 ->
     case relop of
@@ -127,28 +130,28 @@ checkStmt env rettype x = case x of
     where {process env1 item = case item of
       NoInit ident -> do
         when (checkVarBlockDecl env ident)
-          (fail $ "variable " ++ show ident ++ "redeclared in " ++ printTree x)
+          (fail $ printf "variable %s redeclared in %s" ident $ printTree x)
         updateVarType env1 ident (type_, False)
       Init ident expr -> do
         when (checkVarBlockDecl env ident)
-          (fail $ "variable " ++ show ident ++ "redeclared in " ++ printTree x)
+          (fail $ printf "variable %s redeclared in %s" ident $ printTree x)
         checkExpr env type_ expr
         updateVarType env1 ident (type_, False)}
   Ass ident expr -> do
     (type_, ro) <- getVarType env ident
-    when ro $ fail ("parameter " ++ show ident ++ " modified in " ++
+    when ro $ fail (printf "parameter %s modified in %s" ident $
       printTree (Ass ident expr))
     checkExpr env type_ expr
     return env
   Incr ident -> do
     (_, ro) <- getVarType env ident
-    when ro $ fail ("parameter " ++ show ident ++ " modified in " ++
+    when ro $ fail (printf "parameter %s modified in %s" ident $
       printTree (Incr ident))
     checkExpr env Int (EVar ident)
     return env
   Decr ident -> do
     (_, ro) <- getVarType env ident
-    when ro $ fail ("parameter " ++ show ident ++ " modified in " ++
+    when ro $ fail (printf "parameter %s modified in %s" ident $
       printTree (Incr ident))
     checkExpr env Int (EVar ident)
     return env
@@ -176,11 +179,40 @@ checkTopDef :: Env -> TopDef -> Err ()
 checkTopDef env (FnDef type_ ident args block)  = do
   let {insertArg env1 (Arg type1 ident1) = do
     when (checkVarBlockDecl env1 ident1)
-      (fail $ "parameter " ++ show ident1 ++ "redeclared in function definition for " ++ show ident)
+      (fail $ printf "parameter %s redeclared in function definition for %s" ident1 ident)
     updateVarType env1 ident1 (type1, True)}
   env2 <- foldM insertArg env args
   let (Block stmts) = block
   void $ checkStmts env2 type_ stmts
+  unless (checkReturnsBlock block) $
+    fail $ printf "function %s must return a value" ident
+
+
+checkReturnsBlock :: Block -> Bool
+checkReturnsBlock (Block stmts) =
+  any checkReturnsStmt stmts
+
+checkReturnsStmt :: Stmt -> Bool
+checkReturnsStmt x = case x of
+  Empty -> False
+  BStmt block -> checkReturnsBlock block
+  Decl type_ items -> False
+  Ass ident expr -> False
+  Incr ident -> False
+  Decr ident -> False
+  Ret expr -> True
+  VRet -> True
+  Cond expr stmt -> case expr of
+    ELitTrue -> True
+    _ -> checkReturnsStmt stmt
+  CondElse expr stmt1 stmt2 -> case expr of
+    ELitTrue -> checkReturnsStmt stmt1
+    ELitFalse -> checkReturnsStmt stmt2
+    _ -> checkReturnsStmt stmt1 && checkReturnsStmt stmt2
+  While expr stmt -> case expr of
+    ELitTrue -> checkReturnsStmt stmt
+    _ -> False
+  SExp expr -> False
 
 predefs :: [TopDef]
 predefs = [FnDef Void (Ident "printInt") [Arg Int $ Ident ""] $ Block [],
