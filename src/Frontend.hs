@@ -74,7 +74,7 @@ checkExpr env typ expr = do
 
 inferExpr :: Env -> Expr -> Err Type
 inferExpr env x = case x of
-  EVar ident -> fmap fst $ getVarType env ident
+  EVar ident ->  fst <$> getVarType env ident
   ELitInt integer -> return Int
   ELitTrue -> return Bool
   ELitFalse -> return Bool
@@ -99,12 +99,19 @@ inferExpr env x = case x of
         (fail $ "invalid operands in " ++ printTree x)
       return t1
   ERel expr1 relop expr2 ->
-    checkTwo Int expr1 expr2 >> return Bool
+    case relop of
+      EQU -> checkSame expr1 expr2 >> return Bool
+      NE -> checkSame expr1 expr2 >> return Bool
+      _ -> checkTwo Int expr1 expr2 >> return Bool
   EAnd expr1 expr2 ->
     checkTwo Bool expr1 expr2 >> return Bool
   EOr expr1 expr2 -> inferExpr env (EAnd expr1 expr2)
-  where {checkTwo type_ expr1 expr2 =
-    checkExpr env type_ expr1 >> checkExpr env type_ expr2}
+  where
+    checkTwo type_ expr1 expr2 =
+      checkExpr env type_ expr1 >> checkExpr env type_ expr2
+    checkSame expr1 expr2 = do
+      t1 <- inferExpr env expr1
+      checkExpr env t1 expr2
 
 checkStmts :: Env -> Type -> [Stmt] -> Err Env
 checkStmts env rettype =

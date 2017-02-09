@@ -288,18 +288,22 @@ genExpr x = case x of
           e2 <- genExpr expr2
           emitBin QBinOp op e1 e2
       _ -> fail "wrong types in expression"
-  ERel expr1 relop expr2 ->
-    let {op = case relop of
-      LTH -> L
-      AbsLatte.LE -> IR.LE
-      GTH -> G
-      AbsLatte.GE -> IR.GE
-      EQU -> E
-      AbsLatte.NE -> IR.NE}
-    in do
-      e1 <- genExpr expr1
-      e2 <- genExpr expr2
-      emitBin QCompOp op e1 e2
+  ERel expr1 relop expr2 -> do
+    t1 <- inferExpr expr1
+    case t1 of
+      Str -> genCmpString relop expr1 expr2
+      _ ->
+        let {op = case relop of
+          LTH -> L
+          AbsLatte.LE -> IR.LE
+          GTH -> G
+          AbsLatte.GE -> IR.GE
+          EQU -> E
+          AbsLatte.NE -> IR.NE}
+        in do
+          e1 <- genExpr expr1
+          e2 <- genExpr expr2
+          emitBin QCompOp op e1 e2
   EAnd expr1 expr2 -> do
     e1 <- genExpr expr1
     [l1, l2] <- replicateM 2 freshLabel
@@ -320,6 +324,21 @@ genExpr x = case x of
     emit $ QGoto l2
     emitLabel l2
     return  e1
+
+genCmpString :: RelOp -> Expr -> Expr -> GenM Operand
+genCmpString relop e1 e2 = do
+  s1 <- genExpr e1
+  s2 <- genExpr e2
+  emitParam s1
+  emitParam s2
+  res <- emitCallExternal "strcmp"
+  emitBin QCompOp op res (LitInt 0)
+  where
+    op = case relop of
+      EQU -> E
+      AbsLatte.NE -> IR.NE
+      _ ->
+        error "internal error - only equality comparisons for strings"
 
 genAddStr :: Expr -> Expr -> GenM Operand
 genAddStr expr1 expr2 = do
