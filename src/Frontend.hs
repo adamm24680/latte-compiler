@@ -184,7 +184,7 @@ checkTopDef env (FnDef type_ ident args block)  = do
   env2 <- foldM insertArg env args
   let (Block stmts) = block
   void $ checkStmts env2 type_ stmts
-  unless (checkReturnsBlock block) $
+  unless (type_ == Void || checkReturnsBlock block) $
     fail $ printf "function %s must return a value" ident
 
 
