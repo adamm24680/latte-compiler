@@ -7,7 +7,7 @@ main :: IO ()
 main = core
 
 core :: IO ()
-core = forM_ [4..22] (testCase "lattests/good/core")
+core = forM_ [1..22] (testCase "lattests/good/core")
 
 testCase :: String -> Int -> IO ()
 testCase base i = do
