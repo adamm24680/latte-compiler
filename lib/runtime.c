@@ -8,7 +8,7 @@ void printInt(int a) {
   printf("%d\n",a);
 }
 void printString(char* a) {
-  printf("%d\n",a);
+  printf("%s\n",a);
 }
 void error() {
   printf("runtime error\n");
