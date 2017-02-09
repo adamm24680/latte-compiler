@@ -203,8 +203,8 @@ checkReturnsStmt x = case x of
   Ret expr -> True
   VRet -> True
   Cond expr stmt -> case expr of
-    ELitTrue -> True
-    _ -> checkReturnsStmt stmt
+    ELitTrue -> checkReturnsStmt stmt
+    _ -> False
   CondElse expr stmt1 stmt2 -> case expr of
     ELitTrue -> checkReturnsStmt stmt1
     ELitFalse -> checkReturnsStmt stmt2
