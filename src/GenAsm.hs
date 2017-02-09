@@ -135,7 +135,8 @@ genQ (Mid q) = case q of
     emit $ Mov d eax
   QNot d s -> do
     emit $ Mov eax s
-    emit $ Not eax
+    emit $ Sub eax $ PImm 1
+    emit $ Neg eax
     emit $ Mov d eax
   QLoad d s -> do
     emit $ Mov eax s
