@@ -237,8 +237,8 @@ genNasmRepr funlist = [sectdecl, globdecl, extdecl] ++ reverse inslist
     extdecl = "    extern "++ intercalate "," (Set.toList extrs)
     globdecl = "    global main"
     sectdecl = "section .text"
-    rewrites1 = [elimNop]
-    rewrites2 = []
+    rewrites1 = [elimNop, elimMov]
+    rewrites2 = [elimMov2]
     rewrites3 = []
     optimized = peepholeOpt rewrites1 rewrites2 rewrites3 (instrs res) []
     inslist = map show optimized
@@ -277,4 +277,16 @@ peepholeOpt r1 r2 r3 insns acc = case insns of
 
 elimNop i = case i of
   Nop -> Just []
+  _ -> Nothing
+
+elimMov i = case i of
+  Mov a b -> if a == b then Just [] else Nothing
+  _ -> Nothing
+
+elimMov2 i = case i of
+  (Mov a1 b1, Mov a2 b2) ->
+    if a1 == b2 && a2 == b1 then
+      Just [Mov a1 b1]
+    else
+      Nothing
   _ -> Nothing
