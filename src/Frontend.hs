@@ -1,17 +1,48 @@
 module Frontend
-  (getRepr, Err, Program, predefs)
+  (getRepr, Err, Program, predefs, Type(..), transType)
     where
 
 import qualified Data.Map as Map
 import ErrM
 import ParLatte
 import PrintLatte
-import AbsLatte
+import AbsLatte hiding (Type(..))
+import qualified AbsLatte (Type(..))
 import Control.Monad
 import Text.Printf
 
+data Type
+    = Int
+    | Str
+    | Bool
+    | Void
+    | Array (Type)
+    | Fun (Type) [Type]
+  deriving (Eq, Ord, Show)
+instance Print (Type) where
+  prt i e = case e of
+    Int -> prPrec i 0 (concatD [doc (showString "int")])
+    Str -> prPrec i 0 (concatD [doc (showString "string")])
+    Bool -> prPrec i 0 (concatD [doc (showString "boolean")])
+    Void -> prPrec i 0 (concatD [doc (showString "void")])
+    Array type_ -> prPrec i 0 (concatD [prt 0 type_, doc (showString "[]")])
+    Fun type_ types -> prPrec i 0 (concatD [prt 0 type_, doc (showString "("), prt 0 types, doc (showString ")")])
+  prtList _ [] = (concatD [])
+  prtList _ [x] = (concatD [prt 0 x])
+  prtList _ (x:xs) = (concatD [prt 0 x, doc (showString ","), prt 0 xs])
 
-data FunType = FunType Type [Type] deriving (Eq)
+transType :: AbsLatte.Type a -> Type
+transType x = case x of
+  AbsLatte.Int _ -> Int
+  AbsLatte.Str _ -> Str
+  AbsLatte.Bool _ -> Bool
+  AbsLatte.Void _ -> Void
+  AbsLatte.Array _ type_ -> Array $ transType type_
+  AbsLatte.Fun _ type_ types -> Fun (transType type_) (map transType types)
+
+type LineInfo = Maybe (Int, Int)
+
+data FunType = FunType (Type) [Type] deriving (Eq)
 
 type VarContext = Map.Map Ident (Type, Bool)
 type FunContext = Map.Map Ident FunType
@@ -68,7 +99,7 @@ concatErrors x = case x of
       Bad e2 -> Bad $ e ++ "\n" ++ e2
   [] -> Ok ()
 
-checkExpr :: Env -> Type -> Expr -> Err ()
+checkExpr :: Env -> Type -> Expr a -> Err ()
 checkExpr env typ expr = do
   typ2 <- inferExpr env expr
   unless (typ2 == typ) $
@@ -76,40 +107,40 @@ checkExpr env typ expr = do
       printf "type of %s : expected %s but found %s"
         (printTree expr)  (printTree typ)  (printTree typ2)
 
-inferExpr :: Env -> Expr -> Err Type
+inferExpr :: Env -> Expr a -> Err Type
 inferExpr env x = case x of
-  EVar ident ->  fst <$> getVarType env ident
-  ELitInt _ -> return Int
-  ELitTrue -> return Bool
-  ELitFalse -> return Bool
-  EApp ident exprs -> do
+  EVar _ ident ->  fst <$> getVarType env ident
+  ELitInt _ _ -> return Int
+  ELitTrue _ -> return Bool
+  ELitFalse _ -> return Bool
+  EApp _ ident exprs -> do
     (FunType ret params) <- getFunType env ident
     unless (length params == length exprs) $
       fail $ printf
         "incorrect number of parameters in %s" (printTree x)
     zipWithM_ (checkExpr env) params exprs
     return ret
-  EString _ -> return Str
-  Neg expr -> checkExpr env Int expr >> return Int
-  Not expr -> checkExpr env Bool expr >> return Bool
-  EMul expr1 mulop expr2 ->
+  EString _ _ -> return Str
+  Neg _ expr -> checkExpr env Int expr >> return Int
+  Not _ expr -> checkExpr env Bool expr >> return Bool
+  EMul _ expr1 mulop expr2 ->
     checkTwo Int expr1 expr2 >> return Int
-  EAdd expr1 addop expr2 -> case addop of
-    Minus -> checkTwo Int expr1 expr2 >> return Int
-    Plus -> do
+  EAdd _ expr1 addop expr2 -> case addop of
+    Minus _ -> checkTwo Int expr1 expr2 >> return Int
+    Plus _ -> do
       t1 <- inferExpr env expr1
       t2 <- inferExpr env expr2
       when (t1 /= t2 || t1 /= Str && t1 /= Int)
         (fail $ printf "invalid operands in %s" $ printTree x)
       return t1
-  ERel expr1 relop expr2 ->
+  ERel _ expr1 relop expr2 ->
     case relop of
-      EQU -> checkSame expr1 expr2 >> return Bool
-      NE -> checkSame expr1 expr2 >> return Bool
+      EQU _ -> checkSame expr1 expr2 >> return Bool
+      NE _ -> checkSame expr1 expr2 >> return Bool
       _ -> checkTwo Int expr1 expr2 >> return Bool
-  EAnd expr1 expr2 ->
+  EAnd _ expr1 expr2 ->
     checkTwo Bool expr1 expr2 >> return Bool
-  EOr expr1 expr2 -> inferExpr env (EAnd expr1 expr2)
+  EOr x expr1 expr2 -> inferExpr env (EAnd x expr1 expr2)
   where
     checkTwo type_ expr1 expr2 =
       checkExpr env type_ expr1 >> checkExpr env type_ expr2
@@ -117,113 +148,114 @@ inferExpr env x = case x of
       t1 <- inferExpr env expr1
       checkExpr env t1 expr2
 
-checkStmts :: Env -> Type -> [Stmt] -> Err Env
+checkStmts :: Env -> Type -> [Stmt a] -> Err Env
 checkStmts env rettype =
   foldM (\env1 stmt -> checkStmt env1 rettype stmt) env
 
-checkStmt :: Env -> Type -> Stmt -> Err Env
+checkStmt :: Env -> Type -> Stmt a -> Err Env
 checkStmt env rettype x = case x of
-  Empty -> return env
-  BStmt (Block stmts) -> do
+  Empty _-> return env
+  BStmt _ (Block _ stmts) -> do
     checkStmts (enterBlock env) rettype stmts
     return env
-  Decl type_ items -> foldM process env items
+  Decl _ type_ items -> foldM process env items
     where {process env1 item = case item of
-      NoInit ident -> do
+      NoInit _ ident -> do
         when (checkVarBlockDecl env ident)
           (fail $ printf "variable %s redeclared in %s" ident $ printTree x)
-        updateVarType env1 ident (type_, False)
-      Init ident expr -> do
+        updateVarType env1 ident (transType type_, False)
+      Init _ ident expr -> do
         when (checkVarBlockDecl env ident)
           (fail $ printf "variable %s redeclared in %s" ident $ printTree x)
-        checkExpr env type_ expr
-        updateVarType env1 ident (type_, False)}
-  Ass ident expr -> do
+        checkExpr env (transType type_) expr
+        updateVarType env1 ident (transType type_, False)}
+  Ass x ident expr -> do
     (type_, ro) <- getVarType env ident
     when ro $ fail (printf "parameter %s modified in %s" ident $
-      printTree (Ass ident expr))
+      printTree (Ass x ident expr))
     checkExpr env type_ expr
     return env
-  Incr ident -> do
+  Incr x ident -> do
     (_, ro) <- getVarType env ident
     when ro $ fail (printf "parameter %s modified in %s" ident $
-      printTree (Incr ident))
-    checkExpr env Int (EVar ident)
+      printTree (Incr x ident))
+    checkExpr env Int (EVar x ident)
     return env
-  Decr ident -> do
+  Decr x ident -> do
     (_, ro) <- getVarType env ident
     when ro $ fail (printf "parameter %s modified in %s" ident $
-      printTree (Incr ident))
-    checkExpr env Int (EVar ident)
+      printTree (Incr x ident))
+    checkExpr env Int (EVar x ident)
     return env
-  Ret expr -> checkExpr env rettype expr >> return env
-  VRet -> unless (rettype == Void) (fail "return value needed") >> return env
-  Cond expr stmt -> do
+  Ret _ expr -> checkExpr env rettype expr >> return env
+  VRet _ -> unless (rettype == Void) (fail "return value needed") >> return env
+  Cond _ expr stmt -> do
     checkExpr env Bool expr
     checkStmt env rettype stmt
     return env
-  CondElse expr stmt1 stmt2 -> do
+  CondElse _ expr stmt1 stmt2 -> do
     checkExpr env Bool expr
     checkStmt env rettype stmt1
     checkStmt env rettype stmt2
     return env
-  While expr stmt -> checkStmt env rettype (Cond expr stmt)
-  SExp expr -> inferExpr env expr >> return env
+  While x expr stmt -> checkStmt env rettype (Cond x expr stmt)
+  SExp _ expr -> inferExpr env expr >> return env
 
 
-declTopDef :: Env -> TopDef -> Err Env
-declTopDef env (FnDef type_ ident args block) =
-  updateFunType env ident (FunType type_ argtypes)
-  where argtypes = map (\(Arg type1 _)-> type1) args
+declTopDef :: Env -> TopDef a -> Err Env
+declTopDef env (FnDef _ type_ ident args block) =
+  updateFunType env ident (FunType (transType type_) argtypes)
+  where argtypes = map (\(Arg _ type1 _)-> transType type1) args
 
-checkTopDef :: Env -> TopDef -> Err ()
-checkTopDef env (FnDef type_ ident args block)  = do
-  let {insertArg env1 (Arg type1 ident1) = do
+checkTopDef :: Env -> TopDef a -> Err ()
+checkTopDef env (FnDef _ type_ ident args block)  = do
+  let {insertArg env1 (Arg _ type1 ident1) = do
     when (checkVarBlockDecl env1 ident1)
       (fail $ printf "parameter %s redeclared in function definition for %s" ident1 ident)
-    updateVarType env1 ident1 (type1, True)}
+    updateVarType env1 ident1 (transType type1, True)}
   env2 <- foldM insertArg env args
-  let (Block stmts) = block
-  void $ checkStmts env2 type_ stmts
-  unless (type_ == Void || checkReturnsBlock block) $
+  let (Block _ stmts) = block
+  void $ checkStmts env2 (transType type_) stmts
+  unless (transType type_ == Void || checkReturnsBlock block) $
     fail $ printf "function %s must return a value" ident
 
 
-checkReturnsBlock :: Block -> Bool
-checkReturnsBlock (Block stmts) =
+checkReturnsBlock :: Block a -> Bool
+checkReturnsBlock (Block _ stmts) =
   any checkReturnsStmt stmts
 
-checkReturnsStmt :: Stmt -> Bool
+checkReturnsStmt :: Stmt a -> Bool
 checkReturnsStmt x = case x of
-  Empty -> False
-  BStmt block -> checkReturnsBlock block
-  Decl type_ items -> False
-  Ass ident expr -> False
-  Incr ident -> False
-  Decr ident -> False
-  Ret expr -> True
-  VRet -> True
-  Cond expr stmt -> case expr of
-    ELitTrue -> checkReturnsStmt stmt
+  Empty _ -> False
+  BStmt _ block -> checkReturnsBlock block
+  Decl _ type_ items -> False
+  Ass _ ident expr -> False
+  Incr _ ident -> False
+  Decr _ ident -> False
+  Ret _ expr -> True
+  VRet _ -> True
+  Cond _ expr stmt -> case expr of
+    ELitTrue _ -> checkReturnsStmt stmt
     _ -> False
-  CondElse expr stmt1 stmt2 -> case expr of
-    ELitTrue -> checkReturnsStmt stmt1
-    ELitFalse -> checkReturnsStmt stmt2
+  CondElse _ expr stmt1 stmt2 -> case expr of
+    ELitTrue _ -> checkReturnsStmt stmt1
+    ELitFalse _ -> checkReturnsStmt stmt2
     _ -> checkReturnsStmt stmt1 && checkReturnsStmt stmt2
-  While expr stmt -> case expr of
-    ELitTrue -> checkReturnsStmt stmt
+  While _ expr stmt -> case expr of
+    ELitTrue _ -> checkReturnsStmt stmt
     _ -> False
-  SExp expr -> False
+  SExp _ expr -> False
 
-predefs :: [TopDef]
-predefs = [FnDef Void (Ident "printInt") [Arg Int $ Ident ""] $ Block [],
-  FnDef Void (Ident "printString") [Arg Str $ Ident ""] $ Block [],
-  FnDef Void (Ident "error") [] $ Block [],
-  FnDef Int (Ident "readInt") [] $ Block [],
-  FnDef Str (Ident "readString") [] $ Block []]
+predefs :: [TopDef LineInfo]
+predefs = [
+  FnDef Nothing (AbsLatte.Void Nothing) (Ident "printInt") [Arg Nothing (AbsLatte.Int Nothing) $ Ident ""] $ Block Nothing [],
+  FnDef Nothing (AbsLatte.Void Nothing) (Ident "printString") [Arg Nothing (AbsLatte.Str Nothing) $ Ident ""] $ Block Nothing [],
+  FnDef Nothing (AbsLatte.Void Nothing) (Ident "error") [] $ Block Nothing [],
+  FnDef Nothing (AbsLatte.Int Nothing) (Ident "readInt") [] $ Block Nothing [],
+  FnDef Nothing (AbsLatte.Str Nothing) (Ident "readString") [] $ Block Nothing []]
 
-checkProgram :: Program -> Err Program
-checkProgram (Program topdefs) = do
+checkProgram :: Program LineInfo -> Err (Program LineInfo)
+checkProgram (Program i topdefs) = do
   env1 <- foldM declTopDef emptyEnv (predefs ++ topdefs)
   let checked = map (checkTopDef env1) topdefs
   if any (not . errToBool) checked then
@@ -235,13 +267,13 @@ checkProgram (Program topdefs) = do
     mainType <- getFunType env1 (Ident "main")
     when (mainType /= FunType Int [])
       (fail  "main function has wrong type (should be int())")
-    return $ Program topdefs
+    return $ Program i topdefs
 
 
-parse :: String -> Err Program
+parse :: String -> Err (Program LineInfo)
 parse = pProgram . myLexer
 
-getRepr:: String -> Either String Program
+getRepr:: String -> Either String (Program LineInfo)
 getRepr s =
   case parse s >>= checkProgram of
     Bad e -> Left e

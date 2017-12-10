@@ -6,7 +6,9 @@ module GenIR
 
 import IR
 import qualified Data.Map as Map
-import AbsLatte
+import AbsLatte hiding (Type(..))
+import qualified AbsLatte (Type(..))
+import Frontend (Type(..), transType)
 import Control.Monad
 import Control.Monad.RWS
 import Text.Printf
@@ -207,12 +209,12 @@ genCall ident = do
   else
     emitCall ident
 
-genDecl :: Type -> Item -> GenM GenEnv
+genDecl :: Type -> Item a -> GenM GenEnv
 genDecl type_ item = do
   env <- ask
   let {(e, ident) = case item of
-    NoInit ident -> (fromJust $ defaultValue type_, ident)
-    Init ident expr -> (expr, ident)}
+    NoInit x ident -> (fmap (const x) (fromJust $ defaultValue type_), ident)
+    Init _ ident expr -> (expr, ident)}
   uniq <- freshUnique
   let (Ident s) = ident
   let new = Reg $ printf "v%d_%s" uniq s
@@ -222,91 +224,91 @@ genDecl type_ item = do
   emit $ QCopy new r
   return $ insertVar ident loc type_ env
 
-defaultValue :: Type -> Maybe Expr
+defaultValue :: Type -> Maybe (Expr ())
 defaultValue t = case t of
-  Int -> Just $ ELitInt 0
-  Bool ->Just ELitFalse
-  Str -> Just $ EString ""
+  Int -> Just $ ELitInt () 0
+  Bool -> Just $ ELitFalse ()
+  Str -> Just $ EString () ""
   _ -> Nothing
 
-inferExpr :: Expr -> GenM Type
+inferExpr :: Expr a -> GenM Type
 inferExpr x = case x of
-  EVar ident -> getVarType ident
-  ELitInt integer -> return Int
-  ELitTrue -> return Bool
-  ELitFalse -> return Bool
-  EApp ident exprs ->
+  EVar _ ident -> getVarType ident
+  ELitInt _ integer -> return Int
+  ELitTrue _ -> return Bool
+  ELitFalse _ -> return Bool
+  EApp _ ident exprs ->
     getFunType ident >>= (\(Fun t _) -> return t)
-  EString string -> return Str
-  Neg expr -> return Int
-  Not expr -> return Bool
-  EMul expr1 mulop expr2 -> return Int
-  EAdd expr1 addop expr2 -> inferExpr expr1
-  ERel expr1 relop expr2 -> return Bool
-  EAnd expr1 expr2 -> return Bool
-  EOr expr1 expr2 -> return Bool
+  EString _ string -> return Str
+  Neg _ expr -> return Int
+  Not _ expr -> return Bool
+  EMul _ expr1 mulop expr2 -> return Int
+  EAdd _ expr1 addop expr2 -> inferExpr expr1
+  ERel _ expr1 relop expr2 -> return Bool
+  EAnd _ expr1 expr2 -> return Bool
+  EOr _ expr1 expr2 -> return Bool
 
-genExpr :: Expr -> GenM Operand
+genExpr :: Expr a -> GenM Operand
 genExpr x = case x of
-  EVar ident -> loadVar ident
-  ELitInt integer -> return $ LitInt integer
-  ELitTrue -> return $ LitInt 1
-  ELitFalse -> return $ LitInt 0
-  EApp ident exprs -> do
+  EVar _ ident -> loadVar ident
+  ELitInt _ integer -> return $ LitInt integer
+  ELitTrue _ -> return $ LitInt 1
+  ELitFalse _ -> return $ LitInt 0
+  EApp _ ident exprs -> do
     vs <- mapM genExpr exprs
     mapM_ emitParam vs
     genCall ident
-  EString string -> do
+  EString _ string -> do
     emitParam $ LitInt . toInteger $ (length string + 1)
     emitParam $ LitInt 4
     allocated <- emitCallExternal "calloc"
     sequence_ [emitWrite allocated (offset-1) value | (offset, value) <- zip [1..(length string)] (map (LitInt . toInteger. fromEnum) string)]
     return allocated
-  Neg expr -> do
+  Neg _ expr -> do
     e <- genExpr expr
     emitUn QNeg e
-  Not expr -> do
+  Not _ expr -> do
     e <- genExpr expr
     emitUn QNot e
-  EMul expr1 mulop expr2 ->
+  EMul _ expr1 mulop expr2 ->
     let {op = case mulop of
-      Times -> QMul
-      Div -> QDiv
-      Mod -> QMod}
+      Times _ -> QMul
+      Div _ -> QDiv
+      Mod _ -> QMod}
     in do
       e1 <- genExpr expr1
       e2 <- genExpr expr2
       emitBin QBinOp op e1 e2
-  EAdd expr1 addop expr2 -> do
+  EAdd _ expr1 addop expr2 -> do
     type_ <- inferExpr expr1
     case type_ of
       Str -> genAddStr expr1 expr2
       Int ->
         let {op = case addop of
-          Plus -> QAdd
-          Minus -> QSub}
+          Plus _ -> QAdd
+          Minus _ -> QSub}
         in do
           e1 <- genExpr expr1
           e2 <- genExpr expr2
           emitBin QBinOp op e1 e2
       _ -> fail "wrong types in expression"
-  ERel expr1 relop expr2 -> do
+  ERel _ expr1 relop expr2 -> do
     t1 <- inferExpr expr1
     case t1 of
       Str -> genCmpString relop expr1 expr2
       _ ->
         let {op = case relop of
-          LTH -> L
-          AbsLatte.LE -> IR.LE
-          GTH -> G
-          AbsLatte.GE -> IR.GE
-          EQU -> E
-          AbsLatte.NE -> IR.NE}
+          LTH _ -> L
+          AbsLatte.LE _ -> IR.LE
+          GTH _ -> G
+          AbsLatte.GE _ -> IR.GE
+          EQU _ -> E
+          AbsLatte.NE _ -> IR.NE}
         in do
           e1 <- genExpr expr1
           e2 <- genExpr expr2
           emitBin QCompOp op e1 e2
-  EAnd expr1 expr2 -> do
+  EAnd _ expr1 expr2 -> do
     e1 <- genExpr expr1
     [l1, l2] <- replicateM 2 freshLabel
     emit $ QGotoBool e1 l1 l2
@@ -316,7 +318,7 @@ genExpr x = case x of
     emit $ QGoto l2
     emitLabel l2
     return e1
-  EOr expr1 expr2 -> do
+  EOr _ expr1 expr2 -> do
     e1 <- genExpr expr1
     [l1, l2] <- replicateM 2 freshLabel
     emit $ QGotoBool e1 l2 l1
@@ -327,7 +329,7 @@ genExpr x = case x of
     emitLabel l2
     return  e1
 
-genCmpString :: RelOp -> Expr -> Expr -> GenM Operand
+genCmpString :: RelOp a -> Expr a -> Expr a -> GenM Operand
 genCmpString relop e1 e2 = do
   s1 <- genExpr e1
   s2 <- genExpr e2
@@ -337,12 +339,12 @@ genCmpString relop e1 e2 = do
   emitBin QCompOp op res (LitInt 0)
   where
     op = case relop of
-      EQU -> E
-      AbsLatte.NE -> IR.NE
+      EQU _ -> E
+      AbsLatte.NE _ -> IR.NE
       _ ->
         error "internal error - only equality comparisons for strings"
 
-genAddStr :: Expr -> Expr -> GenM Operand
+genAddStr :: Expr a -> Expr a -> GenM Operand
 genAddStr expr1 expr2 = do
   e1 <- genExpr expr1
   e2 <- genExpr expr2
@@ -362,7 +364,7 @@ genAddStr expr1 expr2 = do
   emitCallExternal "strcat"
   return allocated
 
-genStmts :: [Stmt] -> GenM ()
+genStmts :: [Stmt a] -> GenM ()
 genStmts l =
   case l of
     h:t -> do
@@ -370,7 +372,7 @@ genStmts l =
       local (const env) $ genStmts t
     [] -> return ()
 
-genDecls :: Type -> [Item] -> GenM GenEnv
+genDecls :: Type -> [Item a] -> GenM GenEnv
 genDecls type_ l =
   case l of
     h:t -> do
@@ -378,30 +380,30 @@ genDecls type_ l =
       local (const env) $ genDecls type_ t
     [] -> ask
 
-genStmt :: Stmt -> GenM GenEnv
+genStmt :: Stmt a -> GenM GenEnv
 genStmt x = case x of
-  Empty -> ask
-  BStmt (Block stmts) -> do
+  Empty _ -> ask
+  BStmt _ (Block _ stmts) -> do
     genStmts stmts
     ask
-  Decl type_ items -> genDecls type_ items
-  Ass ident expr -> do
+  Decl _ type_ items -> genDecls (transType type_) items
+  Ass _ ident expr -> do
     e <- genExpr expr
     storeVar ident e
     ask
-  Incr ident -> do
+  Incr _ ident -> do
     val <- loadVar ident
     res <- emitBin QBinOp QAdd val (LitInt 1)
     storeVar ident res
     ask
-  Decr ident -> do
+  Decr _ ident -> do
     val <- loadVar ident
     res <- emitBin QBinOp QSub val (LitInt 1)
     storeVar ident res
     ask
-  Ret expr -> genExpr expr >>= (emit . QRet) >> ask
-  VRet -> emit QVRet >> ask
-  Cond expr stmt -> do
+  Ret _ expr -> genExpr expr >>= (emit . QRet) >> ask
+  VRet _ -> emit QVRet >> ask
+  Cond _ expr stmt -> do
     [l1, l2] <- replicateM 2 freshLabel
     e <- genExpr expr
     emit $ QGotoBool e l1 l2
@@ -410,7 +412,7 @@ genStmt x = case x of
     emit $ QGoto l2
     emitLabel l2
     ask
-  CondElse expr stmt1 stmt2 -> do
+  CondElse _ expr stmt1 stmt2 -> do
     [l1, l2, l3] <- replicateM 3 freshLabel
     e <- genExpr expr
     emit $ QGotoBool e l1 l2
@@ -422,7 +424,7 @@ genStmt x = case x of
     emit $ QGoto l3
     emitLabel l3
     ask
-  While expr stmt -> do
+  While _ expr stmt -> do
     [l1, l2] <- replicateM 2 freshLabel
     e1 <- genExpr expr
     emit $ QGotoBool e1 l1 l2
@@ -432,7 +434,7 @@ genStmt x = case x of
     emit $ QGotoBool e2 l1 l2
     emitLabel l2
     ask
-  SExp expr -> do
+  SExp _ expr -> do
     genExpr expr
     ask
 
@@ -461,18 +463,18 @@ makeBlock l =
       (QLabel label) = entry
   in (label, mkFirst entry H.<*> mkMiddles middle H.<*> mkLast exit)
 
-makeFunInfo :: Bool -> TopDef -> FunInfo
+makeFunInfo :: Bool -> TopDef a -> FunInfo
 makeFunInfo ispredef x = case x of
-  FnDef t ident args _ -> FunInfo {
+  FnDef _ t ident args _ -> FunInfo {
     funIdent = ident,
-    funType = Fun t $ map (\(Arg t _) -> t) args,
+    funType = Fun (transType t) $ map (\(Arg _ t _) -> transType t) args,
     isPredef = ispredef}
 
-makeFun :: GenEnv -> Type -> Ident -> [Arg] -> GenM a ->
+makeFun :: GenEnv -> Type -> Ident -> [Arg a] -> GenM b ->
   QFunDef (Label, Graph (Quad Operand) C C)
 makeFun initEnv type_ ident args gen =
-  let fntype = Fun type_ (map (\(Arg t _) -> t) args)
-      vars = map (\(Arg t ident, i) -> insertVar ident (Param i) t)
+  let fntype = Fun type_ (map (\(Arg _ t _) -> transType t) args)
+      vars = map (\(Arg _ t ident, i) -> insertVar ident (Param i) $ transType t)
         $ zip args [0..length args - 1]
       env = foldr (.) id vars initEnv
       state = newState
@@ -492,21 +494,21 @@ checkIfZero reg = do
 
 
 
-genFun :: GenEnv -> TopDef -> QFunDef (Label, Graph (Quad Operand) C C)
-genFun initEnv (FnDef type_ ident args block) =
+genFun :: GenEnv -> TopDef a -> QFunDef (Label, Graph (Quad Operand) C C)
+genFun initEnv (FnDef x type_ ident args block) =
   let {gen = do
     label <- freshLabel
     emitLabel label
-    genStmt $ BStmt block
-    case defaultValue type_ of
+    genStmt $ BStmt x block
+    case defaultValue $ transType type_ of
       Just expr -> do
         e <- genExpr expr
         emit $ QRet e
       Nothing -> emit $ QVRet}
-  in makeFun initEnv type_ ident args gen
+  in makeFun initEnv (transType type_) ident args gen
 
-genProgram :: Program -> [QFunDef (Label, Graph (Quad Operand) C C)]
-genProgram (Program topdefs) =
+genProgram :: Program a -> [QFunDef (Label, Graph (Quad Operand) C C)]
+genProgram (Program _ topdefs) =
   let predefinfos = map (makeFunInfo True) Frontend.predefs
       infos = map (makeFunInfo False) topdefs
       initEnv = foldl insertFunInfo newEnv $ infos ++ predefinfos

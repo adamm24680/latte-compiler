@@ -7,9 +7,10 @@ module IR (Operand(..), Label, Quad(..), BinOp(..), PackIns(..),
 import qualified Data.Map as Map
 import Text.Printf
 import Compiler.Hoopl (Label, C, O, NonLocal(..), Graph, showGraph, HooplNode(..))
-import AbsLatte
+import AbsLatte hiding (Type)
+--import qualified AbsLatte (Type)
 import qualified Frontend -- for PrintfArg instance
-
+import Frontend (Type(..))
 
 --instance PrintfArg Ident where
 --  formatArg (Ident s) _ = showString s

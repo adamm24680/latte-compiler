@@ -17,7 +17,7 @@ import Opt
 import Liveness
 import GenAsm
 
-genIR :: Program -> IO String
+genIR :: Program a -> IO String
 genIR p = do
   let l = genProgram p
   let l1 = map propOptFun l
