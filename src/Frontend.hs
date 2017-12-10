@@ -16,10 +16,10 @@ data Type
     | Str
     | Bool
     | Void
-    | Array (Type)
-    | Fun (Type) [Type]
+    | Array Type
+    | Fun Type [Type]
   deriving (Eq, Ord, Show)
-instance Print (Type) where
+instance Print Type where
   prt i e = case e of
     Int -> prPrec i 0 (concatD [doc (showString "int")])
     Str -> prPrec i 0 (concatD [doc (showString "string")])
@@ -27,9 +27,9 @@ instance Print (Type) where
     Void -> prPrec i 0 (concatD [doc (showString "void")])
     Array type_ -> prPrec i 0 (concatD [prt 0 type_, doc (showString "[]")])
     Fun type_ types -> prPrec i 0 (concatD [prt 0 type_, doc (showString "("), prt 0 types, doc (showString ")")])
-  prtList _ [] = (concatD [])
-  prtList _ [x] = (concatD [prt 0 x])
-  prtList _ (x:xs) = (concatD [prt 0 x, doc (showString ","), prt 0 xs])
+  prtList _ [] = concatD []
+  prtList _ [x] = concatD [prt 0 x]
+  prtList _ (x:xs) = concatD [prt 0 x, doc (showString ","), prt 0 xs]
 
 transType :: AbsLatte.Type a -> Type
 transType x = case x of
@@ -42,7 +42,7 @@ transType x = case x of
 
 type LineInfo = Maybe (Int, Int)
 
-data FunType = FunType (Type) [Type] deriving (Eq)
+data FunType = FunType Type [Type] deriving (Eq)
 
 type VarContext = Map.Map Ident (Type, Bool)
 type FunContext = Map.Map Ident FunType
