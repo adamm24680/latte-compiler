@@ -259,10 +259,11 @@ genExpr x = case x of
     mapM_ emitParam vs
     genCall ident
   EString _ string -> do
-    emitParam $ LitInt . toInteger $ (length string + 1)
+    let corrected = drop 1 (take (length string - 1) string)
+    emitParam $ LitInt . toInteger $ (length corrected + 1)
     emitParam $ LitInt 4
     allocated <- emitCallExternal "calloc"
-    sequence_ [emitWrite allocated (offset-1) value | (offset, value) <- zip [1..(length string)] (map (LitInt . toInteger. fromEnum) string)]
+    sequence_ [emitWrite allocated (offset-1) value | (offset, value) <- zip [1..(length corrected)] (map (LitInt . toInteger. fromEnum) corrected)]
     return allocated
   Neg _ expr -> do
     e <- genExpr expr

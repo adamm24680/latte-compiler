@@ -16,7 +16,7 @@ testCase base i = do
   let latFileName = name ++ ".lat"
   let outputName = name ++ ".output"
   inputExists <- doesFileExist inputName
-  callCommand $ "stack exec latc-exe " ++ latFileName
+  callCommand $ "stack exec latc_x86 " ++ latFileName
   if inputExists then
     callCommand $ printf "cat %s | %s > out" inputName name
   else

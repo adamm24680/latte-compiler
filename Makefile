@@ -1,7 +1,7 @@
 all: latc_x86
 
 lib/runtime.o: lib/runtime.c
-	gcc -m32 -c -o lib/runtime.o lib/runtime.s
+	gcc -m32 -c -o lib/runtime.o lib/runtime.c
 
 grammar/AbsLatte.hs grammar/ErrM.hs grammar/LexLatte.x grammar/ParLatte.y grammar/PrintLatte.hs: grammar/Latte.cf
 	bnfc --haskell Latte.cf
