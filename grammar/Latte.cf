@@ -6,7 +6,14 @@ Program.   Program ::= [TopDef] ;
 
 FnDef.	   TopDef ::= Type Ident "(" [Arg] ")" Block ;
 
+ClassDef.  TopDef ::= "class" "{" [ClassEl] "}" ;
+
 separator nonempty TopDef "" ;
+
+MethodDef. ClassEl ::= Type Ident "(" [Arg] ")" Block ;
+FieldDef.  ClassEl ::= Type [Ident] ";" ;
+separator nonempty ClassEl "" ;
+separator nonempty Ident "," ;
 
 Arg. 	   Arg ::= Type Ident;
 
@@ -60,6 +67,8 @@ Void.      Type ::= "void" ;
 
 Array.     Type ::= Type"[]" ;
 
+Class.     Type ::= Ident ;
+
 internal   Fun. Type ::= Type "(" [Type] ")" ;
 
 separator  Type "," ;
@@ -78,7 +87,9 @@ EApp.      Expr6 ::= Ident "(" [Expr] ")" ;
 
 EString.   Expr6 ::= String ;
 
-EAccess.   Expr6 ::= Ident "." Ident;
+EField.    Expr6 ::= Expr6 "." Ident ;
+
+EMethod.   Expr6 ::= Expr6 "." Ident "(" [Expr] ")" ;
 
 Neg.       Expr5 ::= "-" Expr6 ;
 
