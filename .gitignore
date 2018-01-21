@@ -1,0 +1,12 @@
+*~
+latc_x86
+cabal.config
+.stack-work/
+lib/runtime.o
+
+grammar/*
+!grammar/Latte.cf
+
+lattests/good/*
+!lattests/good/*.output
+!lattests/good/*.lat
