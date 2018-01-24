@@ -6,7 +6,10 @@ Program.   Program ::= [TopDef] ;
 
 FnDef.	   TopDef ::= Type Ident "(" [Arg] ")" Block ;
 
-ClassDef.  TopDef ::= "class" "{" [ClassEl] "}" ;
+ClassDef.  TopDef ::= "class" Ident ClassExt "{" [ClassEl] "}" ;
+
+Extends.   ClassExt ::= "extends" Ident ;
+NoExtend.  ClassExt ::= ;
 
 separator nonempty TopDef "" ;
 
@@ -75,6 +78,10 @@ separator  Type "," ;
 
 -- Expressions ---------------------------------------------
 
+ENull.    Expr6 ::= "null" ;
+
+-- ECast.    Expr6 ::= "(" Type ")" Expr ;
+
 EVar.      Expr6 ::= Ident ;
 
 ELitInt.   Expr6 ::= Integer ;
@@ -104,6 +111,8 @@ ERel.      Expr2 ::= Expr2 RelOp Expr3 ;
 EAnd.      Expr1 ::= Expr2 "&&" Expr1 ;
 
 EOr.       Expr ::= Expr1 "||" Expr ;
+
+
 
 
 coercions  Expr 6 ;

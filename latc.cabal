@@ -35,6 +35,7 @@ library
                      , array
                      , mtl
                      , containers
+                     , generic-deriving
   default-language:    Haskell2010
 
 executable latc_x86
