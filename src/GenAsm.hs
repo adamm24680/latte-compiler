@@ -1,40 +1,41 @@
-{-# LANGUAGE FlexibleInstances, GADTs #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs             #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 module GenAsm (genNasmRepr)
   where
 
-import Compiler.Hoopl (Graph, C, Label)
-import Control.Monad.State.Strict
-import qualified Data.Map as Map
-import qualified Data.Set as Set
-import Data.Maybe (fromJust)
-import Data.List (intercalate)
+import           Compiler.Hoopl             (C, Graph, Label)
+import           Control.Monad.State.Strict
+import           Data.List                  (intercalate)
+import qualified Data.Map                   as Map
+import           Data.Maybe                 (fromJust)
+import qualified Data.Set                   as Set
 
-import Linearscan
-import Linearize
-import IR
-import Liveness (LiveAnnotated)
-import X86DSL
+import           IR
+import           Linearize
+import           Linearscan
+import           Liveness                   (LiveAnnotated)
+import           X86DSL
 
 
 
 data GenSt = GenSt {
-  instrs :: [X86Ins] ,
-  funMapping :: Map.Map Ident X86Label,
-  counter :: Int,
-  externs :: Set.Set String,
+  instrs      :: [X86Ins] ,
+  funMapping  :: Map.Map Ident X86Label,
+  counter     :: Int,
+  externs     :: Set.Set String,
   stackOffset :: Int,
-  params :: [X86Op]
+  params      :: [X86Op]
 }
 
 type GenM a = State GenSt a
 
 
 instance Show (PhysOp X86Reg) where
-  show (PhysReg r) = show r
-  show (Constant i) = show i
+  show (PhysReg r)   = show r
+  show (Constant i)  = show i
   show (StackSlot i) = "[" ++ show Ebp ++ "-"++ show (4*(i+1))++"]"
-  show NoReg = "__noreg__"
+  show NoReg         = "__noreg__"
 
 
 emit :: X86Ins -> GenM ()
@@ -56,9 +57,9 @@ linearizeAndAlloc (QFunDef ident type_ g parms) =
 convOp :: PhysOp X86Reg -> X86Op
 convOp pr = case pr of
   PhysReg reg -> PReg reg
-  Constant i -> PImm $ fromInteger i
+  Constant i  -> PImm $ fromInteger i
   StackSlot i -> PEAddress $ AOff ebp (-4 * (i+1))
-  NoReg -> NoX86Reg
+  NoReg       -> NoX86Reg
 
 toX86Label :: Label -> X86Label
 toX86Label l = X86Label $ "." ++ show l
@@ -113,11 +114,11 @@ genQ (Mid q) = case q of
     emit $ Cmp eax s2
     emit $ Mov eax $ PImm 0
     let {cond = case op of
-      L -> CL
+      L  -> CL
       LE -> CLE
-      G -> CG
+      G  -> CG
       GE -> CGE
-      E -> CZ
+      E  -> CZ
       NE -> CNZ }
     emit $ Setcc cond
     emit $ Mov d eax
@@ -198,7 +199,7 @@ genFun (QFunDef ident type_ insns parms, locals) = do
   let allocas = length $ filter id $
                   map (\ins -> case ins of
                                 Mid (QAlloca _) -> True
-                                _ -> False)
+                                _               -> False)
                   insns
   let insns2 = map (fmap convOp) insns
   modify $ \s -> s {stackOffset = -4 * locals}
@@ -255,17 +256,17 @@ peepholeOpt r1 r2 r3 insns acc = case insns of
   [] -> reverse acc
   (h:t) -> case applyUntil (rewrites1 ++ rewrites2 ++ rewrites3) insns of
     Just res -> peepholeOpt r1 r2 r3 res acc
-    Nothing -> peepholeOpt r1 r2 r3 t (h:acc)
+    Nothing  -> peepholeOpt r1 r2 r3 t (h:acc)
   where
     apply1 r l = case l of
       h1:t -> fmap (++ t) (r h1)
-      _ -> Nothing
+      _    -> Nothing
     apply2 r l = case l of
       h1:h2:t -> fmap (++ t) (r (h1, h2))
-      _ -> Nothing
+      _       -> Nothing
     apply3 r l = case l of
       h1:h2:h3:t -> fmap (++ t) (r (h1, h2, h3))
-      _ -> Nothing
+      _          -> Nothing
     rewrites1 = map apply1 r1
     rewrites2 = map apply2 r2
     rewrites3 = map apply3 r3
@@ -278,11 +279,11 @@ peepholeOpt r1 r2 r3 insns acc = case insns of
 
 elimNop i = case i of
   Nop -> Just []
-  _ -> Nothing
+  _   -> Nothing
 
 elimMov i = case i of
   Mov a b -> if a == b then Just [] else Nothing
-  _ -> Nothing
+  _       -> Nothing
 
 elimMov2 i = case i of
   (Mov a1 b1, Mov a2 b2) ->
@@ -297,7 +298,7 @@ elimAdd0 i = case i of
   Add (PImm 0) _ -> Just []
   Sub _ (PImm 0) -> Just []
   Sub (PImm 0) _ -> Just []
-  _ -> Nothing
+  _              -> Nothing
 
 jmpElim i = case i of
   (Jmp (PLabel l1), Label l2) ->

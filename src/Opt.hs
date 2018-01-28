@@ -1,15 +1,17 @@
-{-# LANGUAGE GADTs, ScopedTypeVariables #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 --module Opt (propOptFun, deadElimOptFun)
 module Opt (propOptFun)
   where
 
-import AbsLatte (Ident)
-import IR ( Quad(..), Operand(..), BinOp(..), CompOp(..), QFunDef(..))
-import Compiler.Hoopl
-import Data.Maybe
-import qualified Data.Map as Map
-import qualified Data.Set as Set
+import           AbsLatte       (Ident)
+import           Compiler.Hoopl
+import qualified Data.Map       as Map
+import           Data.Maybe
+import qualified Data.Set       as Set
+import           IR             (BinOp (..), CompOp (..), Operand (..),
+                                 QFunDef (..), Quad (..))
 
 
 data Copied = Copied Operand | CTop deriving (Eq)
@@ -66,24 +68,24 @@ propRewrite = mkFRewrite rw
   where
     rw :: FuelMonad m => (Quad Operand) e x -> PropFact -> m (Maybe(Graph (Quad Operand) e x))
     rw q f = return $ case q of
-      QBinOp d op s1 s2 -> rewrite2 f (QBinOp d op) s1 s2
+      QBinOp d op s1 s2  -> rewrite2 f (QBinOp d op) s1 s2
       QCompOp d op s1 s2 -> rewrite2 f (QCompOp d op) s1 s2
-      QAnd d s1 s2 -> rewrite2 f (QAnd d) s1 s2
-      QOr d s1 s2 -> rewrite2 f (QOr d) s1 s2
-      QNeg d s -> rewrite1 f (QNeg d) s
-      QNot d s -> rewrite1 f (QNot d) s
-      QLoad d s -> rewrite1 f (QLoad d) s
-      QStore d s -> rewrite1 f (QStore d) s
-      QCopy d s -> rewrite1 f (QCopy d) s
-      QGotoBool r l1 l2 -> rewriteLast f (\r1 -> QGotoBool r1 l1 l2) r
-      QParam r -> rewrite1 f QParam r
+      QAnd d s1 s2       -> rewrite2 f (QAnd d) s1 s2
+      QOr d s1 s2        -> rewrite2 f (QOr d) s1 s2
+      QNeg d s           -> rewrite1 f (QNeg d) s
+      QNot d s           -> rewrite1 f (QNot d) s
+      QLoad d s          -> rewrite1 f (QLoad d) s
+      QStore d s         -> rewrite1 f (QStore d) s
+      QCopy d s          -> rewrite1 f (QCopy d) s
+      QGotoBool r l1 l2  -> rewriteLast f (\r1 -> QGotoBool r1 l1 l2) r
+      QParam r           -> rewrite1 f QParam r
       --QPhi d s1 s2 -> rewrite2 f (QPhi d) s1 s2
-      QRet r -> rewriteLast f QRet r
-      _ -> Nothing
+      QRet r             -> rewriteLast f QRet r
+      _                  -> Nothing
     lp f v = case Map.lookup v f of
       Just (Copied(LitInt i)) -> Just (LitInt i)
       --Just (Copied o) -> Just o
-      _ -> Nothing
+      _                       -> Nothing
     rewrite2 f con s1 s2 =
       case (lp f s1, lp f s2) of
         (Nothing, Nothing) -> Nothing
@@ -105,11 +107,11 @@ simplify = mkFRewrite rw where
   rw q _ = return $ case q of
     QCompOp d op (LitInt i1) (LitInt i2) ->
       let {fn = case op of
-        L -> (<)
+        L  -> (<)
         LE -> (<=)
-        G -> (>)
+        G  -> (>)
         GE -> (>=)
-        E -> (==)
+        E  -> (==)
         NE -> (/=) }
       in simpl d $ toInt $ fn i1 i2
     QBinOp d QDiv _ (LitInt 0) -> Nothing

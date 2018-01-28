@@ -37,7 +37,7 @@ instance Show LineData where
 type Err = Either String
 type VType = Type ()
 data FunSig = FunSig VType [VType] deriving (Eq)
-data ClassSig= ClassSig {super :: Maybe Ident,
+data ClassSig = ClassSig {super :: Maybe Ident,
                     fields     :: [(Ident, VType)],
                     methods    :: [(Ident, FunSig)]}
 data GlobalEnv = GlobalEnv [(Ident, ClassSig)] [(Ident, FunSig)]

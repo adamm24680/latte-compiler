@@ -2,14 +2,14 @@
 module Linearscan (linearScan, PhysOp (..))
   where
 
-import Liveness
-import IR
-import Linearize
+import           IR
+import           Linearize
+import           Liveness
 
-import qualified Data.Map as Map
-import qualified Data.Set as Set
-import Control.Monad.State
-import Data.Maybe
+import           Control.Monad.State
+import qualified Data.Map            as Map
+import           Data.Maybe
+import qualified Data.Set            as Set
 
 
 data PhysOp t = PhysReg t | Constant Integer | StackSlot Int| NoReg deriving Eq
@@ -17,10 +17,10 @@ data PhysOp t = PhysReg t | Constant Integer | StackSlot Int| NoReg deriving Eq
 
 data LsState t = LsState {
   mapping ::  Map.Map Operand t,
-  free :: [t],
-  active :: Set.Set Operand,
+  free    :: [t],
+  active  :: Set.Set Operand,
   spilled :: Set.Set Operand,
-  dump :: [String]
+  dump    :: [String]
 }
 
 
@@ -92,8 +92,8 @@ linearScan regs (anns, prog) =
       case Map.lookup reg mapped of
         Just regid -> PhysReg regid
         Nothing -> case Map.lookup reg spillMap of
-          Just i -> StackSlot i
+          Just i  -> StackSlot i
           Nothing -> NoReg
     filterTrivial ins = case ins of
       Mid (QCopy a1 a2) -> a1 /= a2
-      _ -> True
+      _                 -> True

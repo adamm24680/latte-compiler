@@ -1,17 +1,19 @@
-{-# LANGUAGE GADTs, ScopedTypeVariables, FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 module Liveness (computeLiveRanges, livenessAnn, LiveAnnotated(..),
     mkLiveAnnotated, LiveVars, LiveRanges, getLiveStarts, getLiveEnd)
   where
 
-import AbsLatte (Ident)
-import IR ( Quad(..), Operand(..), BinOp(..), CompOp(..), QFunDef(..),
-  ShowLinRepr(..))
-import Compiler.Hoopl
-import Data.Maybe
-import qualified Data.Map as Map
-import qualified Data.Set as Set
-import Control.Monad.State
+import           AbsLatte            (Ident)
+import           Compiler.Hoopl
+import           Control.Monad.State
+import qualified Data.Map            as Map
+import           Data.Maybe
+import qualified Data.Set            as Set
+import           IR                  (BinOp (..), CompOp (..), Operand (..),
+                                      QFunDef (..), Quad (..), ShowLinRepr (..))
 
 type LiveVars = Set.Set Operand
 
@@ -44,31 +46,31 @@ liveTransfer = mkBTransfer tr
   where
     tr :: LiveAnnotated e x -> Fact x LiveVars -> LiveVars
     tr (LiveAnnotated (_, q)) f = case q of
-      QLabel _  -> f
-      QCopy d s -> addUse s $ delUse d f
-      QBinOp d op s1 s2 -> update2 d s1 s2 f
+      QLabel _           -> f
+      QCopy d s          -> addUse s $ delUse d f
+      QBinOp d op s1 s2  -> update2 d s1 s2 f
       QCompOp d op s1 s2 -> update2 d s1 s2 f
-      QAnd d s1 s2 -> update2 d s1 s2 f
-      QOr d s1 s2 -> update2 d s1 s2 f
-      QNeg d s -> update1 d s f
-      QNot d s -> update1 d s f
-      QLoad d s -> update1 d s f
-      QStore d s -> addUse d $ addUse s f
-      QGoto l -> factL f l
-      QGotoBool r l1 l2 -> addUse r $ factL f l1 `Set.union` factL f l2
-      QParam r -> addUse r f
-      QCall d _ -> delUse d f
-      QCallExternal d _ -> delUse d f
-      QVRet -> fact_bot liveLattice
-      QRet r -> addUse r $ fact_bot liveLattice
-      QAlloca d -> delUse d f
-      QError -> fact_bot liveLattice
-      QLoadParam d _ -> delUse d f
+      QAnd d s1 s2       -> update2 d s1 s2 f
+      QOr d s1 s2        -> update2 d s1 s2 f
+      QNeg d s           -> update1 d s f
+      QNot d s           -> update1 d s f
+      QLoad d s          -> update1 d s f
+      QStore d s         -> addUse d $ addUse s f
+      QGoto l            -> factL f l
+      QGotoBool r l1 l2  -> addUse r $ factL f l1 `Set.union` factL f l2
+      QParam r           -> addUse r f
+      QCall d _          -> delUse d f
+      QCallExternal d _  -> delUse d f
+      QVRet              -> fact_bot liveLattice
+      QRet r             -> addUse r $ fact_bot liveLattice
+      QAlloca d          -> delUse d f
+      QError             -> fact_bot liveLattice
+      QLoadParam d _     -> delUse d f
     delUse = Set.delete
     addUse o f =
       case o of
         LitInt _ -> f
-        _ -> Set.insert o f
+        _        -> Set.insert o f
     update2 d s1 s2 f = addUse s1 $ addUse s2 $ delUse d f
     update1 d s f = addUse s $ delUse d f
     factL factbase l = fromMaybe Set.empty $ lookupFact l factbase
@@ -78,17 +80,17 @@ deadElimRewrite = mkBRewrite3 elimCO elimOO elimOC
   where
     elimOO :: Monad m => LiveAnnotated O O -> Fact O LiveVars -> m (Maybe (Graph LiveAnnotated O O))
     elimOO (LiveAnnotated(_, q)) f = return $ case q of
-      QCopy d _ -> elimIf d
-      QBinOp d _ _ _ -> elimIf d
+      QCopy d _       -> elimIf d
+      QBinOp d _ _ _  -> elimIf d
       QCompOp d _ _ _ -> elimIf d
-      QAnd d _ _ -> elimIf d
-      QOr d _ _ -> elimIf d
-      QNeg d _ -> elimIf d
-      QNot d _ -> elimIf d
-      QLoad d _ -> elimIf d
-      QAlloca d -> elimIf d
-      QLoadParam d _ -> elimIf d
-      _ -> Just $ mkMiddle $ LiveAnnotated (f, q)
+      QAnd d _ _      -> elimIf d
+      QOr d _ _       -> elimIf d
+      QNeg d _        -> elimIf d
+      QNot d _        -> elimIf d
+      QLoad d _       -> elimIf d
+      QAlloca d       -> elimIf d
+      QLoadParam d _  -> elimIf d
+      _               -> Just $ mkMiddle $ LiveAnnotated (f, q)
       where
         elimIf d =
           if not (Set.member d f) then
@@ -139,11 +141,11 @@ getLiveStarts :: Int -> LiveRanges -> Maybe [Operand]
 getLiveStarts i (LiveRanges ls _) = Map.lookup i ls
 
 data LiveStateData = LiveStateData
-  { active :: LiveVars
-  , lannos :: [LiveVars]
+  { active  :: LiveVars
+  , lannos  :: [LiveVars]
   , lstarts :: LiveStart
-  , lends :: LiveEnd
-  , pcCnt :: Int
+  , lends   :: LiveEnd
+  , pcCnt   :: Int
   }
 
 type LiveState a = State LiveStateData a
@@ -186,7 +188,7 @@ step = do
     let new = Set.toList $ la `Set.difference` cur
     let dead = cur `Set.difference` la
 
-    let alt Nothing = Just new
+    let alt Nothing    = Just new
         alt (Just old) = Just $ new ++ old
     modify (\s -> s { lannos = las,
                       active = la,

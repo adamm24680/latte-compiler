@@ -1,17 +1,18 @@
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 module Frontend
   (getRepr, Err, Program, predefs, Type(..), transType)
     where
 
-import qualified Data.Map as Map
-import ParLatte
-import PrintLatte
-import AbsLatte hiding (Type(..))
-import qualified AbsLatte (Type(..))
-import Control.Monad
-import Control.Monad.Reader
-import Text.Printf
+import           AbsLatte             hiding (Type (..))
+import qualified AbsLatte             (Type (..))
+import           Control.Monad
+import           Control.Monad.Reader
+import qualified Data.Map             as Map
 import qualified ErrM
+import           ParLatte
+import           PrintLatte
+import           Text.Printf
 
 data Type
     = Int
@@ -29,17 +30,17 @@ instance Print Type where
     Void -> prPrec i 0 (concatD [doc (showString "void")])
     Array type_ -> prPrec i 0 (concatD [prt 0 type_, doc (showString "[]")])
     Fun type_ types -> prPrec i 0 (concatD [prt 0 type_, doc (showString "("), prt 0 types, doc (showString ")")])
-  prtList _ [] = concatD []
-  prtList _ [x] = concatD [prt 0 x]
+  prtList _ []     = concatD []
+  prtList _ [x]    = concatD [prt 0 x]
   prtList _ (x:xs) = concatD [prt 0 x, doc (showString ","), prt 0 xs]
 
 transType :: AbsLatte.Type a -> Type
 transType x = case x of
-  AbsLatte.Int _ -> Int
-  AbsLatte.Str _ -> Str
-  AbsLatte.Bool _ -> Bool
-  AbsLatte.Void _ -> Void
-  AbsLatte.Array _ type_ -> Array $ transType type_
+  AbsLatte.Int _             -> Int
+  AbsLatte.Str _             -> Str
+  AbsLatte.Bool _            -> Bool
+  AbsLatte.Void _            -> Void
+  AbsLatte.Array _ type_     -> Array $ transType type_
   AbsLatte.Fun _ type_ types -> Fun (transType type_) (map transType types)
 
 type LineInfo = Maybe (Int, Int)
@@ -62,21 +63,21 @@ type Err a = ReaderT LineInfo (Either String) a
 
 errToBool :: Err a -> Bool
 errToBool e = case runReaderT e Nothing of
-  Left _ -> False
+  Left _  -> False
   Right _ -> True
 
 
 checkVarBlockDecl :: Env -> Ident -> Bool
 checkVarBlockDecl (_, h:_) ident =
   case Map.lookup ident h of
-    Just _ -> True
+    Just _  -> True
     Nothing -> False
 getVarType :: Env -> Ident -> Err (Type, Bool)
 getVarType (_, ctx) ident =
   fnd ctx where
     fnd l = case l of
       t:tt -> case Map.lookup ident t of
-        Just x -> return x
+        Just x  -> return x
         Nothing -> fnd tt
       [] -> ask >>= \li -> fail $ printf "undeclared variable %s%s" ident li
 getFunType :: Env -> Ident -> Err FunType
@@ -147,8 +148,8 @@ inferExpr env x = case x of
   ERel li expr1 relop expr2 ->
     local (const li) $ case relop of
       EQU _ -> checkSame expr1 expr2 >> return Bool
-      NE _ -> checkSame expr1 expr2 >> return Bool
-      _ -> checkTwo Int expr1 expr2 >> return Bool
+      NE _  -> checkSame expr1 expr2 >> return Bool
+      _     -> checkTwo Int expr1 expr2 >> return Bool
   EAnd li expr1 expr2 ->
     local (const li) $ checkTwo Bool expr1 expr2 >> return Bool
   EOr x expr1 expr2 -> inferExpr env (EAnd x expr1 expr2)
@@ -248,14 +249,14 @@ checkReturnsStmt x = case x of
   VRet _ -> True
   Cond _ expr stmt -> case expr of
     ELitTrue _ -> checkReturnsStmt stmt
-    _ -> False
+    _          -> False
   CondElse _ expr stmt1 stmt2 -> case expr of
-    ELitTrue _ -> checkReturnsStmt stmt1
+    ELitTrue _  -> checkReturnsStmt stmt1
     ELitFalse _ -> checkReturnsStmt stmt2
-    _ -> checkReturnsStmt stmt1 && checkReturnsStmt stmt2
+    _           -> checkReturnsStmt stmt1 && checkReturnsStmt stmt2
   While _ expr stmt -> case expr of
     ELitTrue _ -> checkReturnsStmt stmt
-    _ -> False
+    _          -> False
   SExp _ expr -> False
 
 predefs :: [TopDef LineInfo]
@@ -273,7 +274,7 @@ checkProgram (Program i topdefs) = do
   if any (not . errToBool) checked then
     let {append a x = case runReaderT x Nothing of
       Right _ -> a
-      Left e -> a ++ e ++ "\n"}
+      Left e  -> a ++ e ++ "\n"}
     in fail $ foldl append "" checked
   else do
     mainType <- getFunType env1 (Ident "main")
@@ -289,4 +290,4 @@ getRepr:: String -> Either String (Program LineInfo)
 getRepr s =
   case parse s of
     ErrM.Bad e -> Left e
-    ErrM.Ok p -> runReaderT (checkProgram p) Nothing
+    ErrM.Ok p  -> runReaderT (checkProgram p) Nothing

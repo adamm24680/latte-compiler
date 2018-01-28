@@ -3,11 +3,11 @@
 module Linearize (Ins(..), linearizeAnnotated)
   where
 
-import Compiler.Hoopl
-import Text.Printf
+import           Compiler.Hoopl
+import           Text.Printf
 
-import Liveness
-import IR
+import           IR
+import           Liveness
 
 
 linearizeAnnotated :: (Label, Graph LiveAnnotated C C) -> ([LiveVars], [Ins Operand])

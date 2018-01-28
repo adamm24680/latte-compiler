@@ -4,7 +4,7 @@ module X86DSL (X86Address(..), X86Label(..), X86Op(..), X86Ins(..), X86Cond(..),
     X86Reg(..), DSLReg(..), elimNoReg)
   where
 
-import Text.Printf
+import           Text.Printf
 
 data X86Reg = Eax | Ebx | Ecx | Edx | Edi | Esi | Ebp | Esp deriving (Eq, Ord)
 
@@ -37,21 +37,21 @@ data X86Op = PReg X86Reg | PImm Int | PEAddress X86Address |
   PLabel X86Label | NoX86Reg
   deriving (Eq)
 instance Show X86Op where
-  show (PReg r) = show r
-  show (PImm i) = "dword " ++ show i
+  show (PReg r)      = show r
+  show (PImm i)      = "dword " ++ show i
   show (PEAddress a) = "dword ["++show a++"]"
-  show (PLabel l) = show l
-  show NoX86Reg = "__noreg__"
+  show (PLabel l)    = show l
+  show NoX86Reg      = "__noreg__"
 
 data X86Cond = CZ | CNZ | CGE | CLE | CG | CL deriving (Eq)
 
 instance Show X86Cond where
-  show CZ = "z"
+  show CZ  = "z"
   show CNZ = "nz"
   show CGE = "ge"
   show CLE = "le"
-  show CG = "g"
-  show CL = "l"
+  show CG  = "g"
+  show CL  = "l"
 instance PrintfArg X86Cond where
   formatArg x _ = shows x
 
@@ -82,58 +82,58 @@ instance PrintfArg X86Op where
 
 instance Show X86Ins where
   show x = case x of
-    Label l -> printf "%s:" $ show l
-    Push op -> printf "    push %s" op
-    Pop op -> printf "    pop %s" op
+    Label l     -> printf "%s:" $ show l
+    Push op     -> printf "    push %s" op
+    Pop op      -> printf "    pop %s" op
     Mov op1 op2 -> printf "    mov %s, %s" op1 op2
     Add op1 op2 -> printf "    add %s, %s" op1 op2
     Sub op1 op2 -> printf "    sub %s, %s" op1 op2
     Cmp op1 op2 -> printf "    cmp %s, %s" op1 op2
-    Imul op -> printf "    imul %s" op
-    Idiv op -> printf "    idiv %s" op
-    Jmp op -> printf "    jmp %s" op
-    Jz op -> printf "    jz %s" op
-    Jnz op -> printf "    jnz %s" op
-    Call op -> printf "    call %s" op
-    Ret -> printf "    ret"
-    Nop -> printf "    nop"
-    Setcc cond -> printf "    set%s al" cond
-    And reg op -> printf "    and %s, %s" (show reg) op
-    Or reg op -> printf "    or %s, %s" (show reg) op
-    Neg op -> printf "    neg %s" op
-    Not op -> printf "    not %s" op
+    Imul op     -> printf "    imul %s" op
+    Idiv op     -> printf "    idiv %s" op
+    Jmp op      -> printf "    jmp %s" op
+    Jz op       -> printf "    jz %s" op
+    Jnz op      -> printf "    jnz %s" op
+    Call op     -> printf "    call %s" op
+    Ret         -> printf "    ret"
+    Nop         -> printf "    nop"
+    Setcc cond  -> printf "    set%s al" cond
+    And reg op  -> printf "    and %s, %s" (show reg) op
+    Or reg op   -> printf "    or %s, %s" (show reg) op
+    Neg op      -> printf "    neg %s" op
+    Not op      -> printf "    not %s" op
 
 
 elimNoReg :: X86Ins -> X86Ins
 elimNoReg x = case x of
-  Label _ -> x
-  Push op -> elim1 op
-  Pop op -> elim1 op
+  Label _     -> x
+  Push op     -> elim1 op
+  Pop op      -> elim1 op
   Mov op1 op2 -> elim2 op1 op2
   Add op1 op2 -> elim2 op1 op2
   Sub op1 op2 -> elim2 op1 op2
   Cmp op1 op2 -> elim2 op1 op2
-  Imul op -> elim1 op
-  Idiv op -> elim1 op
-  Jmp op -> elim1 op
-  Jz op -> elim1 op
-  Jnz op -> elim1 op
-  Call op -> elim1 op
-  Ret -> x
-  Nop -> x
-  Setcc _ -> x
-  And _ op -> elim1 op
-  Or _ op -> elim1 op
-  Neg op -> elim1 op
-  Not op -> elim1 op
+  Imul op     -> elim1 op
+  Idiv op     -> elim1 op
+  Jmp op      -> elim1 op
+  Jz op       -> elim1 op
+  Jnz op      -> elim1 op
+  Call op     -> elim1 op
+  Ret         -> x
+  Nop         -> x
+  Setcc _     -> x
+  And _ op    -> elim1 op
+  Or _ op     -> elim1 op
+  Neg op      -> elim1 op
+  Not op      -> elim1 op
   where
     elim2 o1 o2 = case (o1,o2) of
       (NoX86Reg, _) -> Nop
       (_, NoX86Reg) -> Nop
-      _ -> x
+      _             -> x
     elim1 o = case o of
       NoX86Reg -> Nop
-      _ -> x
+      _        -> x
 
 class DSLReg t where
   eax :: t

@@ -1,24 +1,27 @@
-{-# LANGUAGE FlexibleInstances, GADTs, FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs             #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 module GenIR
   (QFunDef(..), genProgram)
   where
 
-import IR
-import qualified Data.Map as Map
-import AbsLatte hiding (Type(..))
-import qualified AbsLatte (Type(..))
-import Frontend (Type(..), transType)
-import Control.Monad
-import Control.Monad.RWS
-import Text.Printf
-import qualified Frontend (predefs)
-import Compiler.Hoopl (Label, UniqueMonad, Unique,
- freshUnique, freshLabel, C, O, Graph, (|*><*|),
-  mkFirst, mkLast, mkMiddles, emptyClosedGraph, showGraph)
-import qualified Compiler.Hoopl as H ((<*>))
-import Data.Maybe
-import qualified Frontend -- for printfArg instance
+import           AbsLatte          hiding (Type (..))
+import qualified AbsLatte          (Type (..))
+import           Compiler.Hoopl    (C, Graph, Label, O, Unique, UniqueMonad,
+                                    emptyClosedGraph, freshLabel, freshUnique,
+                                    mkFirst, mkLast, mkMiddles, showGraph,
+                                    (|*><*|))
+import qualified Compiler.Hoopl    as H ((<*>))
+import           Control.Monad
+import           Control.Monad.RWS
+import qualified Data.Map          as Map
+import           Data.Maybe
+import           Frontend          (Type (..), transType)
+import qualified Frontend          (predefs)
+import qualified Frontend
+import           IR
+import           Text.Printf
 
 
 data VarLoc = Stack Operand | Param Int
@@ -26,13 +29,13 @@ data VarLoc = Stack Operand | Param Int
 newtype IsPredef = IsPredef Bool
 
 data GenState = GenState {
-  uniqueC :: Unique,
+  uniqueC    :: Unique,
   regCounter:: Integer
   }
 
 data FunInfo  = FunInfo {
   funIdent :: Ident,
-  funType :: Type,
+  funType  :: Type,
   isPredef :: Bool
 }
 
@@ -79,14 +82,14 @@ getFunType :: Ident -> GenM Type
 getFunType ident = do
   env <- ask
   case Map.lookup ident $ funInfo env of
-    Just x -> return $ funType x
+    Just x  -> return $ funType x
     Nothing -> fail $ printf "internal error: function %s not found" ident
 
 getFunInfo :: Ident -> GenM FunInfo
 getFunInfo ident = do
   env <- ask
   case Map.lookup ident $ funInfo env of
-    Just x -> return x
+    Just x  -> return x
     Nothing -> fail $ printf "internal error: function %s not found" ident
 
 insertVar ::  Ident -> VarLoc -> Type -> GenEnv -> GenEnv
@@ -190,14 +193,14 @@ loadVar ident = do
   loc <- getVarLoc ident
   case loc of
     Stack reg -> return reg
-    Param i -> emitLoadParam i
+    Param i   -> emitLoadParam i
 
 storeVar :: Ident -> Operand -> GenM()
 storeVar ident val = do
   loc <- getVarLoc ident
   case loc of
     Stack reg -> emit $ QCopy reg val
-    Param _ -> fail "internal error: assignment to parameter"
+    Param _   -> fail "internal error: assignment to parameter"
 
 
 genCall :: Ident -> GenM Operand
@@ -226,10 +229,10 @@ genDecl type_ item = do
 
 defaultValue :: Type -> Maybe (Expr ())
 defaultValue t = case t of
-  Int -> Just $ ELitInt () 0
+  Int  -> Just $ ELitInt () 0
   Bool -> Just $ ELitFalse ()
-  Str -> Just $ EString () ""
-  _ -> Nothing
+  Str  -> Just $ EString () ""
+  _    -> Nothing
 
 inferExpr :: Expr a -> GenM Type
 inferExpr x = case x of
@@ -274,8 +277,8 @@ genExpr x = case x of
   EMul _ expr1 mulop expr2 ->
     let {op = case mulop of
       Times _ -> QMul
-      Div _ -> QDiv
-      Mod _ -> QMod}
+      Div _   -> QDiv
+      Mod _   -> QMod}
     in do
       e1 <- genExpr expr1
       e2 <- genExpr expr2
@@ -286,7 +289,7 @@ genExpr x = case x of
       Str -> genAddStr expr1 expr2
       Int ->
         let {op = case addop of
-          Plus _ -> QAdd
+          Plus _  -> QAdd
           Minus _ -> QSub}
         in do
           e1 <- genExpr expr1
@@ -299,11 +302,11 @@ genExpr x = case x of
       Str -> genCmpString relop expr1 expr2
       _ ->
         let {op = case relop of
-          LTH _ -> L
+          LTH _         -> L
           AbsLatte.LE _ -> IR.LE
-          GTH _ -> G
+          GTH _         -> G
           AbsLatte.GE _ -> IR.GE
-          EQU _ -> E
+          EQU _         -> E
           AbsLatte.NE _ -> IR.NE}
         in do
           e1 <- genExpr expr1
@@ -446,18 +449,18 @@ splitBlocks list =
       case l of
         h : t -> case h of
           Fst _ -> splt t [h] (reverse cur : acc)
-          _ -> splt t (h: cur) acc
+          _     -> splt t (h: cur) acc
         [] -> reverse acc ++ [reverse cur]}
   in tail $ splt list [] []
 
 makeBlock :: [Ins Operand] -> (Label, Graph (Quad Operand) C C)
 makeBlock l =
   let fltFst (Fst _) = True
-      fltFst _ = False
+      fltFst _       = False
       fltMid (Mid _) = True
-      fltMid _ = False
+      fltMid _       = False
       fltLst (Lst _) = True
-      fltLst _ = False
+      fltLst _       = False
       Fst entry = head $ filter fltFst l
       Lst exit = head $ filter fltLst l
       middle = map (\(Mid x) -> x) $ filter fltMid l
