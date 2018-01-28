@@ -112,8 +112,8 @@ EAnd.      Expr1 ::= Expr2 "&&" Expr1 ;
 
 EOr.       Expr ::= Expr1 "||" Expr ;
 
-
-
+internal ESelfField.    Expr ::= "this." Ident ;
+internal ESelfMethod.   Expr ::= "this." Ident "(" [Expr] ")" ;
 
 coercions  Expr 6 ;
 
