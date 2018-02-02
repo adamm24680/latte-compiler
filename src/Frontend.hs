@@ -167,6 +167,26 @@ checkReturnsStmt x = case x of
     _          -> False
   SExp {} -> False
 
+annotateExpr :: VarEnv -> Expr LineData -> FrontendM (Expr VType)
+annotateExpr = undefined
+
+annotateBlockVar :: VType -> (VarEnv, [Item VType]) -> Item LineData ->
+  FrontendM (VarEnv, [Item VType])
+annotateBlockVar type_ (env@(currentEnv : rest), acc) item =
+  case item of
+    NoInit li ident -> do
+      newEnv <- insertDeclaration li ident type_
+      return (newEnv : rest, NoInit voidType ident : acc)
+    Init li ident expr -> do
+      annExpr <- annotateExpr env expr
+      newEnv <- insertDeclaration li ident type_
+      return (newEnv : rest, Init voidType ident annExpr : acc)
+  where
+    insertDeclaration li ident type_ = do
+      when (ident `Map.member` currentEnv)
+        (lift $ Left $ "block variable " ++ show ident ++ "redeclared" ++ show li)
+      return $ Map.insert ident (void type_) currentEnv
+annotateBlockVar _ _ _ = error "empty item list (should not parse)"
 
 annotateStmt :: VarEnv -> Stmt LineData ->
   FrontendM (VarEnv, Stmt VType)
@@ -178,6 +198,12 @@ annotateStmt env stmt =
       BStmt _ block -> do
         annBlock <- annotateBlock env block
         return (env, BStmt voidType annBlock)
+      Decl _ type_ items -> do
+        let foldf = annotateBlockVar $ void type_
+        (newEnv, res) <- foldM foldf (env, []) items
+        let type2 = fmap (const voidType) type_
+        return (newEnv, Decl voidType type2 (reverse res))
+
 
 annotateBlock :: VarEnv -> Block LineData  -> FrontendM (Block VType)
 annotateBlock env (Block _ stmts) = do
