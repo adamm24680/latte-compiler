@@ -6,8 +6,7 @@ module GenIR
   (QFunDef(..), genProgram)
   where
 
-import           AbsLatte          hiding (Type (..))
-import qualified AbsLatte          (Type (..))
+import           AbsLatte
 import           Compiler.Hoopl    (C, Graph, Label, O, Unique, UniqueMonad,
                                     emptyClosedGraph, freshLabel, freshUnique,
                                     mkFirst, mkLast, mkMiddles, showGraph,
@@ -17,16 +16,14 @@ import           Control.Monad
 import           Control.Monad.RWS
 import qualified Data.Map          as Map
 import           Data.Maybe
-import           Frontend          (Type (..), transType)
-import qualified Frontend          (predefs)
-import qualified Frontend
+import           Frontend
 import           IR
 import           Text.Printf
+import  Generics.Deriving.Copoint (gcopoint)
 
 
 data VarLoc = Stack Operand | Param Int
 
-newtype IsPredef = IsPredef Bool
 
 data GenState = GenState {
   uniqueC    :: Unique,
@@ -35,12 +32,12 @@ data GenState = GenState {
 
 data FunInfo  = FunInfo {
   funIdent :: Ident,
-  funType  :: Type,
+  funType  :: FunSig,
   isPredef :: Bool
 }
 
 data GenEnv = GenEnv {
-  varInfo :: Map.Map Ident (VarLoc, Type),
+  varInfo :: Map.Map Ident (VarLoc, VType),
   funInfo :: Map.Map Ident FunInfo}
 
 type GenM = RWS GenEnv [Ins Operand] GenState
@@ -64,26 +61,15 @@ insertFunInfo :: GenEnv -> FunInfo -> GenEnv
 insertFunInfo env info =
   env{funInfo = Map.insert (funIdent info) info $ funInfo env}
 
+instance PrintfArg Ident where
+  formatArg (Ident s) _ = showString s
+
 getVarLoc :: Ident -> GenM VarLoc
 getVarLoc ident = do
   env <- ask
   case Map.lookup ident (varInfo env) of
     Just (loc, _) -> return loc
     Nothing -> fail $ printf "internal error: variable %s not found" ident
-
-getVarType :: Ident -> GenM Type
-getVarType ident = do
-  env <- ask
-  case Map.lookup ident (varInfo env) of
-    Just (_, type_) -> return type_
-    Nothing -> fail $ printf "internal error: variable %s not found" ident
-
-getFunType :: Ident -> GenM Type
-getFunType ident = do
-  env <- ask
-  case Map.lookup ident $ funInfo env of
-    Just x  -> return $ funType x
-    Nothing -> fail $ printf "internal error: function %s not found" ident
 
 getFunInfo :: Ident -> GenM FunInfo
 getFunInfo ident = do
@@ -92,7 +78,7 @@ getFunInfo ident = do
     Just x  -> return x
     Nothing -> fail $ printf "internal error: function %s not found" ident
 
-insertVar ::  Ident -> VarLoc -> Type -> GenEnv -> GenEnv
+insertVar ::  Ident -> VarLoc -> VType -> GenEnv -> GenEnv
 insertVar ident varloc type_ env =
   env{varInfo = Map.insert ident (varloc, type_) (varInfo env)}
 
@@ -105,16 +91,6 @@ emitBin :: (Operand -> a -> Operand -> Operand -> Quad Operand O O) -> a ->
 emitBin con op r1 r2 = do
   dest <- newReg
   emit $ con dest op r1 r2
-  return dest
-
-emitAnd r1 r2 = do
-  dest <- newReg
-  emit $ QAnd dest r1 r2
-  return dest
-
-emitOr r1 r2 = do
-  dest <- newReg
-  emit $ QOr dest r1 r2
   return dest
 
 --emitPhi r1 r2 = do
@@ -212,7 +188,7 @@ genCall ident = do
   else
     emitCall ident
 
-genDecl :: Type -> Item a -> GenM GenEnv
+genDecl :: VType -> Item VType -> GenM GenEnv
 genDecl type_ item = do
   env <- ask
   let {(e, ident) = case item of
@@ -227,31 +203,14 @@ genDecl type_ item = do
   emit $ QCopy new r
   return $ insertVar ident loc type_ env
 
-defaultValue :: Type -> Maybe (Expr ())
+defaultValue :: VType -> Maybe (Expr VType)
 defaultValue t = case t of
-  Int  -> Just $ ELitInt () 0
-  Bool -> Just $ ELitFalse ()
-  Str  -> Just $ EString () ""
+  Int _ -> Just $ ELitInt intType 0
+  Bool _ -> Just $ ELitFalse boolType
+  Str _ -> Just $ EString stringType ""
   _    -> Nothing
 
-inferExpr :: Expr a -> GenM Type
-inferExpr x = case x of
-  EVar _ ident -> getVarType ident
-  ELitInt _ integer -> return Int
-  ELitTrue _ -> return Bool
-  ELitFalse _ -> return Bool
-  EApp _ ident exprs ->
-    getFunType ident >>= (\(Fun t _) -> return t)
-  EString _ string -> return Str
-  Neg _ expr -> return Int
-  Not _ expr -> return Bool
-  EMul _ expr1 mulop expr2 -> return Int
-  EAdd _ expr1 addop expr2 -> inferExpr expr1
-  ERel _ expr1 relop expr2 -> return Bool
-  EAnd _ expr1 expr2 -> return Bool
-  EOr _ expr1 expr2 -> return Bool
-
-genExpr :: Expr a -> GenM Operand
+genExpr :: Expr VType -> GenM Operand
 genExpr x = case x of
   EVar _ ident -> loadVar ident
   ELitInt _ integer -> return $ LitInt integer
@@ -283,11 +242,10 @@ genExpr x = case x of
       e1 <- genExpr expr1
       e2 <- genExpr expr2
       emitBin QBinOp op e1 e2
-  EAdd _ expr1 addop expr2 -> do
-    type_ <- inferExpr expr1
+  EAdd type_ expr1 addop expr2 -> do
     case type_ of
-      Str -> genAddStr expr1 expr2
-      Int ->
+      Str _ -> genAddStr expr1 expr2
+      Int _ ->
         let {op = case addop of
           Plus _  -> QAdd
           Minus _ -> QSub}
@@ -295,11 +253,11 @@ genExpr x = case x of
           e1 <- genExpr expr1
           e2 <- genExpr expr2
           emitBin QBinOp op e1 e2
-      _ -> fail "wrong types in expression"
+      _ -> error "internal error: wrong types in expression"
   ERel _ expr1 relop expr2 -> do
-    t1 <- inferExpr expr1
+    let t1 = gcopoint expr1
     case t1 of
-      Str -> genCmpString relop expr1 expr2
+      Str _ -> genCmpString relop expr1 expr2
       _ ->
         let {op = case relop of
           LTH _         -> L
@@ -333,7 +291,7 @@ genExpr x = case x of
     emitLabel l2
     return  e1
 
-genCmpString :: RelOp a -> Expr a -> Expr a -> GenM Operand
+genCmpString :: RelOp VType -> Expr VType -> Expr VType -> GenM Operand
 genCmpString relop e1 e2 = do
   s1 <- genExpr e1
   s2 <- genExpr e2
@@ -348,7 +306,7 @@ genCmpString relop e1 e2 = do
       _ ->
         error "internal error - only equality comparisons for strings"
 
-genAddStr :: Expr a -> Expr a -> GenM Operand
+genAddStr :: Expr VType -> Expr VType -> GenM Operand
 genAddStr expr1 expr2 = do
   e1 <- genExpr expr1
   e2 <- genExpr expr2
@@ -368,7 +326,7 @@ genAddStr expr1 expr2 = do
   emitCallExternal "strcat"
   return allocated
 
-genStmts :: [Stmt a] -> GenM ()
+genStmts :: [Stmt VType] -> GenM ()
 genStmts l =
   case l of
     h:t -> do
@@ -376,7 +334,7 @@ genStmts l =
       local (const env) $ genStmts t
     [] -> return ()
 
-genDecls :: Type -> [Item a] -> GenM GenEnv
+genDecls :: VType -> [Item VType] -> GenM GenEnv
 genDecls type_ l =
   case l of
     h:t -> do
@@ -384,13 +342,13 @@ genDecls type_ l =
       local (const env) $ genDecls type_ t
     [] -> ask
 
-genStmt :: Stmt a -> GenM GenEnv
+genStmt :: Stmt VType -> GenM GenEnv
 genStmt x = case x of
   Empty _ -> ask
   BStmt _ (Block _ stmts) -> do
     genStmts stmts
     ask
-  Decl _ type_ items -> genDecls (transType type_) items
+  Decl _ type_ items -> genDecls (void type_) items
   Ass _ ident expr -> do
     e <- genExpr expr
     storeVar ident e
@@ -467,22 +425,22 @@ makeBlock l =
       (QLabel label) = entry
   in (label, mkFirst entry H.<*> mkMiddles middle H.<*> mkLast exit)
 
-makeFunInfo :: Bool -> TopDef a -> FunInfo
+makeFunInfo :: Bool -> TopDef VType -> FunInfo
 makeFunInfo ispredef x = case x of
   FnDef _ t ident args _ -> FunInfo {
     funIdent = ident,
-    funType = Fun (transType t) $ map (\(Arg _ t _) -> transType t) args,
+    funType = makeFunSig t args,
     isPredef = ispredef}
 
-makeFun :: GenEnv -> Type -> Ident -> [Arg a] -> GenM b ->
+makeFun :: GenEnv -> VType -> Ident -> [Arg VType] -> GenM b ->
   QFunDef (Label, Graph (Quad Operand) C C)
 makeFun initEnv type_ ident args gen =
-  let fntype = Fun type_ (map (\(Arg _ t _) -> transType t) args)
-      vars = map (\(Arg _ t ident, i) -> insertVar ident (Param i) $ transType t)
+  let fntype = makeFunSig type_ args
+      vars = map (\(Arg _ t ident, i) -> insertVar ident (Param i) $ void t)
         $ zip args [0..length args - 1]
       env = foldr (.) id vars initEnv
       state = newState
-      (s, output) = execRWS gen env state
+      (_, output) = execRWS gen env state
       (labels, blocks) = unzip . map makeBlock . splitBlocks $ output
       entry = head labels
       graph = foldl (|*><*|) emptyClosedGraph blocks
@@ -498,20 +456,20 @@ checkIfZero reg = do
 
 
 
-genFun :: GenEnv -> TopDef a -> QFunDef (Label, Graph (Quad Operand) C C)
+genFun :: GenEnv -> TopDef VType -> QFunDef (Label, Graph (Quad Operand) C C)
 genFun initEnv (FnDef x type_ ident args block) =
   let {gen = do
     label <- freshLabel
     emitLabel label
     genStmt $ BStmt x block
-    case defaultValue $ transType type_ of
+    case defaultValue $ void type_ of
       Just expr -> do
         e <- genExpr expr
         emit $ QRet e
       Nothing -> emit $ QVRet}
-  in makeFun initEnv (transType type_) ident args gen
+  in makeFun initEnv (void type_) ident args gen
 
-genProgram :: Program a -> [QFunDef (Label, Graph (Quad Operand) C C)]
+genProgram :: Program VType -> [QFunDef (Label, Graph (Quad Operand) C C)]
 genProgram (Program _ topdefs) =
   let predefinfos = map (makeFunInfo True) Frontend.predefs
       infos = map (makeFunInfo False) topdefs

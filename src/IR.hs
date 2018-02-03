@@ -10,7 +10,7 @@ import Compiler.Hoopl (Label, C, O, NonLocal(..), Graph, showGraph, HooplNode(..
 import AbsLatte hiding (Type)
 --import qualified AbsLatte (Type)
 import qualified Frontend -- for PrintfArg instance
-import Frontend (Type(..))
+import Frontend (VType, FunSig)
 
 --instance PrintfArg Ident where
 --  formatArg (Ident s) _ = showString s
@@ -162,12 +162,12 @@ qmap f q = case q of
   QError -> QError
   QLoadParam d i -> QLoadParam (f d) i
 
-data QFunDef t = QFunDef Ident Type t Integer
+data QFunDef t = QFunDef Ident FunSig t Integer
 
 class ShowLinRepr t where
   showlr :: t -> String
 
 instance ShowLinRepr t => Show (QFunDef t) where
-  show (QFunDef (Ident ident) type_ g params) =
+  show (QFunDef (Ident ident) _ g params) =
     printf "function %s(%d) {\n%s}" ident params $
       showlr g

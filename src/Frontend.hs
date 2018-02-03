@@ -1,5 +1,7 @@
 module Frontend
-  --(getRepr, Err, Program, predefs, Type(..), transType)
+  (getRepr, Err, predefs,
+  VType, voidType, intType, stringType, boolType,
+  FunSig(..), makeFunSig, Program)
     where
 
 import           AbsLatte
@@ -38,20 +40,20 @@ instance Show LineData where
 type Err = Either String
 type VType = Type ()
 data FunSig = FunSig VType [VType] deriving (Eq)
-data ClassSig = ClassSig {super :: Maybe ClassSig,
-                    fields      :: [(Ident, VType)],
-                    methods     :: [(Ident, FunSig)],
-                    overrides   :: [Ident]}
+data ClassSig = ClassSig { super     :: Maybe ClassSig,
+                           fields    :: [(Ident, VType)],
+                           methods   :: [(Ident, FunSig)],
+                           overrides :: [Ident] }
 data GlobalEnv = GlobalEnv [(Ident, ClassSig)] [(Ident, FunSig)]
-data FrontendEnv = FrontendEnv { globalEnv :: GlobalEnv,
-                                lineData   :: LineData,
-                                returnType :: VType,
-                                inClass    :: Maybe ClassSig }
-type FrontendM = ReaderT FrontendEnv (Either String)
+data FrontendEnv = FrontendEnv { globalEnv  :: GlobalEnv,
+                                 lineData   :: LineData,
+                                 returnType :: VType,
+                                 inClass    :: Maybe ClassSig }
+type FrontendM = ReaderT FrontendEnv Err
 type VarContext = Map.Map Ident VType
 type VarEnv = [VarContext]
 
-makeFunSig :: Type a -> [Arg a] -> FunSig
+makeFunSig :: Type a -> [Arg b] -> FunSig
 makeFunSig type_ args =
   FunSig (void type_) $ map (\(Arg _ argtype _) -> void argtype) args
 
@@ -136,10 +138,6 @@ processTopDef (GlobalEnv cl fl) (ClassDef li ident classext classels) = do
       return $ fieldl ++ map (\i -> (i, void type_)) idents
     processFieldDecl x _ = return x
 
-generateSignatures :: Show a => Program a -> Err GlobalEnv
-generateSignatures (Program _ defs) =
-  foldM processTopDef (GlobalEnv [] []) defs
-
 findInSuper :: (ClassSig -> [(Ident, a)]) ->
   Maybe ClassSig -> Ident -> Maybe a
 findInSuper accessor superclass ident = do
@@ -169,7 +167,7 @@ checkReturnsStmt x = case x of
     _          -> False
   _ -> False
 
-raiseError :: String -> FrontendM ()
+raiseError :: String -> FrontendM a
 raiseError estr = do
   li <- lineData <$> ask
   lift $ Left (estr ++ show li)
@@ -179,18 +177,32 @@ checkTypes type_ types =
   unless (type_ `elem` types) $ raiseError $
     "type mismatch: " ++ show type_ ++ ", expected " ++ show types
 
+findLocal :: VarEnv -> Ident -> Maybe VType
+findLocal (h:t) ident =
+  case Map.lookup ident h of
+    Just type_ -> Just type_
+    Nothing    -> findLocal t ident
+findLocal [] _ = Nothing
+
 findVar :: VarEnv -> Ident -> FrontendM (VType, Bool)
-findVar env ident = undefined
+findVar env ident =
+  case findLocal env ident of
+    Just type_ -> return (type_, False)
+    Nothing    -> raiseError "variable not found" -- TODO class
 
 findFun :: Ident -> FrontendM (FunSig, Bool)
-findFun ident = undefined
+findFun ident = do
+  GlobalEnv _ globalFuns <- globalEnv <$> ask
+  case lookup ident globalFuns of
+    Just funSig -> return (funSig, False)
+    Nothing -> raiseError "function not found" -- TODO class
 
 annotateExpr :: VarEnv -> Expr LineData -> FrontendM (Expr VType)
 annotateExpr env expression =
   local (\fenv -> fenv {lineData = gcopoint expression}) comp
   where
     comp = case expression of
-      ENull _ -> undefined
+      ENull _ -> undefined -- TODO
       EVar _ ident -> do
         (type_, inClass) <- findVar env ident
         if inClass then
@@ -199,7 +211,7 @@ annotateExpr env expression =
           return $ EVar type_ ident
       ELitInt _ integer -> return $ ELitInt intType integer
       ELitTrue _ -> return $ ELitTrue boolType
-      ELitFalse _ -> return $ ELitTrue boolType
+      ELitFalse _ -> return $ ELitFalse boolType
       EApp _ ident exprs -> do
         (FunSig rtype argtypes, inClass) <- findFun ident
         newExprs <- forM exprs $ annotateExpr env
@@ -212,8 +224,8 @@ annotateExpr env expression =
         else
           return $ EApp rtype ident newExprs
       EString _ string -> return $ EString stringType string -- TODO sanitization?
-      EField _ expr ident -> undefined
-      EMethod _ expr ident exprs -> undefined
+      EField {} -> undefined -- TODO
+      EMethod {} -> undefined -- TODO
       Neg _ expr -> do
         newExpr <- annotateExpr env expr
         checkTypes (gcopoint newExpr) [intType]
@@ -273,15 +285,18 @@ annotateBlockVar :: VType -> (VarEnv, [Item VType]) -> Item LineData ->
   FrontendM (VarEnv, [Item VType])
 annotateBlockVar type_ (env@(currentEnv : rest), acc) item =
   case item of
-    NoInit li ident -> do
-      newEnv <- insertDeclaration li ident type_
+    NoInit li ident -> local (\fenv -> fenv{lineData = li}) $ do
+      newEnv <- insertDeclaration ident type_
       return (newEnv : rest, NoInit voidType ident : acc)
-    Init li ident expr -> do
+    Init li ident expr -> local (\fenv -> fenv{lineData = li}) $ do
       annExpr <- annotateExpr env expr
-      newEnv <- insertDeclaration li ident type_
+      checkTypes (gcopoint annExpr) [type_]
+      newEnv <- insertDeclaration ident type_
       return (newEnv : rest, Init voidType ident annExpr : acc)
   where
-    insertDeclaration li ident type_ = do
+    insertDeclaration :: Ident -> VType -> FrontendM VarContext
+    insertDeclaration ident type_ = do
+      li <- lineData <$> ask
       when (ident `Map.member` currentEnv)
         (lift $ Left $ "block variable " ++ show ident ++ "redeclared" ++ show li)
       return $ Map.insert ident (void type_) currentEnv
@@ -299,9 +314,9 @@ annotateStmt env stmt =
         return (env, BStmt voidType annBlock)
       Decl _ type_ items -> do
         let foldf = annotateBlockVar $ void type_
-        (newEnv, res) <- foldM foldf (env, []) items
-        let type2 = fmapVoidType type_
-        return (newEnv, Decl voidType type2 (reverse res))
+        (newEnv, rres) <- foldM foldf (env, []) items
+        let result = reverse rres
+        return (newEnv, Decl voidType (fmapVoidType type_) result)
       Ass _ ident expr -> do
         (type_, inClass) <- findVar env ident
         newExpr <- annotateExpr env expr
@@ -329,7 +344,11 @@ annotateStmt env stmt =
         newExpr <- annotateExpr env expr
         checkTypes (gcopoint newExpr) [rtype]
         return (env, Ret voidType newExpr)
-      VRet _ -> return (env, fmapVoidType stmt)
+      VRet _ -> do
+        rtype <- returnType <$> ask
+        unless (rtype == Void ()) $ raiseError
+          "function with return type void cannot return a value"
+        return (env, fmapVoidType stmt)
       Cond _ expr stmt -> do
         newExpr <- annotateExpr env expr
         checkTypes (gcopoint newExpr) [boolType]
@@ -369,9 +388,12 @@ annotateFun (args, block) = do
   let {insertArg acc (Arg _ type_ ident) =
     Map.insert ident (void type_) acc }
   let initialEnv = foldl insertArg Map.empty args
-  block2 <- annotateBlock [initialEnv] block
+  newBlock <- annotateBlock [initialEnv] block
+  rettype <- returnType <$> ask
+  unless (rettype == Void () || checkReturnsStmt (BStmt voidType newBlock)) $
+    raiseError "function must return a value"
   let args2 = map fmapVoidType args
-  return (args2, block2)
+  return (args2, newBlock)
 
 
 annotateTopDef :: GlobalEnv -> TopDef LineData -> Err (TopDef VType)
@@ -401,5 +423,32 @@ annotateTopDef globalEnv topDef =
             return $ MethodDef voidType rettype2 ident args2 block2
           _ -> return $ fmapVoidType el
 
-annotateTree :: Program LineData -> Program VType
-annotateTree (Program _ topdefs) = undefined topdefs
+annotateTree :: Program LineData -> Err (Program VType)
+annotateTree (Program _ topdefs) = do
+  _globalEnv <- generateSignatures (predefs' ++ topdefs)
+  newTopdefs <- forM topdefs $ annotateTopDef _globalEnv
+  -- TODO check main
+  return $ Program voidType newTopdefs
+
+getRepr :: String -> Err (Program VType)
+getRepr s =
+  case pProgram $ myLexer s of
+    ErrM.Bad e -> Left e
+    ErrM.Ok p -> annotateTree $ fmap LineData p
+
+generateSignatures :: Show a => [TopDef a] -> Err GlobalEnv
+generateSignatures defs =
+  foldM processTopDef (GlobalEnv [] []) defs
+
+predefs' :: [TopDef LineData]
+predefs' = [
+  FnDef emptyLineData (Void emptyLineData) (Ident "printInt") [Arg emptyLineData (Int emptyLineData) $ Ident ""] $ Block emptyLineData [],
+  FnDef emptyLineData (Void emptyLineData) (Ident "printString") [Arg emptyLineData (Str emptyLineData) $ Ident ""] $ Block emptyLineData [],
+  FnDef emptyLineData (Void emptyLineData) (Ident "error") [] $ Block emptyLineData [],
+  FnDef emptyLineData (Int emptyLineData) (Ident "readInt") [] $ Block emptyLineData [],
+  FnDef emptyLineData (Str emptyLineData) (Ident "readString") [] $ Block emptyLineData []]
+  where
+    emptyLineData = LineData Nothing
+
+predefs :: [TopDef VType]
+predefs = map fmapVoidType predefs'
