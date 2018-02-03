@@ -182,8 +182,91 @@ checkTypes type_ types =
 findVar :: VarEnv -> Ident -> FrontendM (VType, Bool)
 findVar env ident = undefined
 
+findFun :: Ident -> FrontendM (FunSig, Bool)
+findFun ident = undefined
+
 annotateExpr :: VarEnv -> Expr LineData -> FrontendM (Expr VType)
-annotateExpr = undefined
+annotateExpr env expression =
+  local (\fenv -> fenv {lineData = gcopoint expression}) comp
+  where
+    comp = case expression of
+      ENull _ -> undefined
+      EVar _ ident -> do
+        (type_, inClass) <- findVar env ident
+        if inClass then
+          return $ ESelfField type_ ident
+        else
+          return $ EVar type_ ident
+      ELitInt _ integer -> return $ ELitInt intType integer
+      ELitTrue _ -> return $ ELitTrue boolType
+      ELitFalse _ -> return $ ELitTrue boolType
+      EApp _ ident exprs -> do
+        (FunSig rtype argtypes, inClass) <- findFun ident
+        newExprs <- forM exprs $ annotateExpr env
+        when (length exprs /= length argtypes) $ raiseError $
+          "incorrect number of parameter to function "++ show ident ++
+          ", expected " ++ show (length argtypes) ++ " got " ++ show (length exprs)
+        zipWithM_ (\x y -> checkTypes (gcopoint x) [y]) newExprs argtypes
+        if inClass then
+          return $ ESelfMethod rtype ident newExprs
+        else
+          return $ EApp rtype ident newExprs
+      EString _ string -> return $ EString stringType string -- TODO sanitization?
+      EField _ expr ident -> undefined
+      EMethod _ expr ident exprs -> undefined
+      Neg _ expr -> do
+        newExpr <- annotateExpr env expr
+        checkTypes (gcopoint newExpr) [intType]
+        return $ Neg intType newExpr
+      Not _ expr -> do
+        newExpr <- annotateExpr env expr
+        checkTypes (gcopoint newExpr) [boolType]
+        return $ Not boolType newExpr
+      EMul _ expr1 mulop expr2 -> do
+        newExpr1 <- annotateExpr env expr1
+        checkTypes (gcopoint newExpr1) [intType]
+        newExpr2 <- annotateExpr env expr2
+        checkTypes (gcopoint newExpr2) [intType]
+        return $ EMul intType newExpr1 (fmapVoidType mulop) newExpr2
+      EAdd _ expr1 addop expr2 -> do
+        newExpr1 <- annotateExpr env expr1
+        let type_ = gcopoint newExpr1
+        checkTypes type_ expectedTypes
+        newExpr2 <- annotateExpr env expr2
+        checkTypes (gcopoint newExpr2) [type_]
+        return $ EAdd type_ newExpr1 (fmapVoidType addop) newExpr2
+        where
+          expectedTypes = case addop of
+            Plus _  -> [intType, stringType]
+            Minus _ -> [intType]
+      ERel _ expr1 relop expr2 -> do
+        newExpr1 <- annotateExpr env expr1
+        let type_ = gcopoint newExpr1
+        checkTypes type_ expectedTypes
+        newExpr2 <- annotateExpr env expr2
+        checkTypes (gcopoint newExpr2) [type_]
+        return $ ERel boolType newExpr1 (fmapVoidType relop) newExpr2
+        where
+          expectedTypes = case relop of
+            EQU _ -> [stringType, intType, boolType]
+            NE _  -> [stringType, intType, boolType]
+            _     -> [intType]
+      EAnd _ expr1 expr2 -> do
+        (newExpr1, newExpr2) <- checkBoolTypes expr1 expr2
+        return $ EAnd boolType newExpr1 newExpr2
+      EOr _ expr1 expr2 -> do
+        (newExpr1, newExpr2) <- checkBoolTypes expr1 expr2
+        return $ EOr boolType newExpr1 newExpr2
+      ESelfField {} -> error "should be internal"
+      ESelfMethod {} -> error "should be internal"
+      where
+        checkBoolTypes expr1 expr2 = do
+          newExpr1 <- annotateExpr env expr1
+          checkTypes (gcopoint newExpr1) [boolType]
+          newExpr2 <- annotateExpr env expr2
+          checkTypes (gcopoint newExpr2) [boolType]
+          return (newExpr1, newExpr2)
+
 
 
 annotateBlockVar :: VType -> (VarEnv, [Item VType]) -> Item LineData ->
