@@ -67,6 +67,13 @@ checkParamRedeclaration =
 voidType :: VType
 voidType = Void ()
 
+intType = Int ()
+stringType = Str ()
+boolType = Bool ()
+
+fmapVoidType :: Functor a => a b -> a VType
+fmapVoidType = fmap (const voidType)
+
 processTopDef :: Show a => GlobalEnv -> TopDef a -> Err GlobalEnv
 processTopDef (GlobalEnv cl fl) (FnDef li type_ ident args _) = do
   when (isJust $ lookup ident fl) $
@@ -146,13 +153,8 @@ findClass (GlobalEnv cl _) ident = lookup ident cl
 
 checkReturnsStmt :: Stmt a -> Bool
 checkReturnsStmt x = case x of
-  Empty _ -> False
   BStmt _ (Block _ stmts) ->
     any checkReturnsStmt stmts
-  Decl {} -> False
-  Ass {} -> False
-  Incr {} -> False
-  Decr {} -> False
   Ret {} -> True
   VRet _ -> True
   Cond _ expr stmt -> case expr of
@@ -165,10 +167,24 @@ checkReturnsStmt x = case x of
   While _ expr stmt -> case expr of
     ELitTrue _ -> checkReturnsStmt stmt
     _          -> False
-  SExp {} -> False
+  _ -> False
+
+raiseError :: String -> FrontendM ()
+raiseError estr = do
+  li <- lineData <$> ask
+  lift $ Left (estr ++ show li)
+
+checkTypes :: VType -> [VType] -> FrontendM ()
+checkTypes type_ types =
+  unless (type_ `elem` types) $ raiseError $
+    "type mismatch: " ++ show type_ ++ ", expected " ++ show types
+
+findVar :: VarEnv -> Ident -> FrontendM (VType, Bool)
+findVar env ident = undefined
 
 annotateExpr :: VarEnv -> Expr LineData -> FrontendM (Expr VType)
 annotateExpr = undefined
+
 
 annotateBlockVar :: VType -> (VarEnv, [Item VType]) -> Item LineData ->
   FrontendM (VarEnv, [Item VType])
@@ -201,8 +217,58 @@ annotateStmt env stmt =
       Decl _ type_ items -> do
         let foldf = annotateBlockVar $ void type_
         (newEnv, res) <- foldM foldf (env, []) items
-        let type2 = fmap (const voidType) type_
+        let type2 = fmapVoidType type_
         return (newEnv, Decl voidType type2 (reverse res))
+      Ass _ ident expr -> do
+        (type_, inClass) <- findVar env ident
+        newExpr <- annotateExpr env expr
+        checkTypes (gcopoint newExpr) [type_]
+        if inClass then
+          return (env, AssSelf voidType ident newExpr)
+        else
+          return (env, Ass voidType ident newExpr)
+      Incr _ ident -> do
+        (type_, inClass) <- findVar env ident
+        checkTypes type_ [intType]
+        if inClass then
+          return (env, IncrSelf voidType ident)
+        else
+          return (env, Incr voidType ident)
+      Decr _ ident -> do
+        (type_, inClass) <- findVar env ident
+        checkTypes type_ [intType]
+        if inClass then
+          return (env, DecrSelf voidType ident)
+        else
+          return (env, Decr voidType ident)
+      Ret _ expr -> do
+        rtype <- returnType <$> ask
+        newExpr <- annotateExpr env expr
+        checkTypes (gcopoint newExpr) [rtype]
+        return (env, Ret voidType newExpr)
+      VRet _ -> return (env, fmapVoidType stmt)
+      Cond _ expr stmt -> do
+        newExpr <- annotateExpr env expr
+        checkTypes (gcopoint newExpr) [boolType]
+        (_, newStmt) <- annotateStmt env stmt
+        return (env, Cond voidType newExpr newStmt)
+      CondElse _ expr stmt1 stmt2 -> do
+        newExpr <- annotateExpr env expr
+        checkTypes (gcopoint newExpr) [boolType]
+        (_, newStmt1) <- annotateStmt env stmt1
+        (_, newStmt2) <- annotateStmt env stmt2
+        return (env, CondElse voidType newExpr newStmt1 newStmt2)
+      While _ expr stmt -> do
+        newExpr <- annotateExpr env expr
+        checkTypes (gcopoint newExpr) [boolType]
+        (_, newStmt) <- annotateStmt env stmt
+        return (env, While voidType newExpr newStmt)
+      SExp _ expr -> do
+        newExpr <- annotateExpr env expr
+        return (env, SExp voidType newExpr)
+      AssSelf {} -> error "should be internal"
+      IncrSelf {} -> error "should be internal"
+      DecrSelf {} -> error "should be internal"
 
 
 annotateBlock :: VarEnv -> Block LineData  -> FrontendM (Block VType)
@@ -221,7 +287,7 @@ annotateFun (args, block) = do
     Map.insert ident (void type_) acc }
   let initialEnv = foldl insertArg Map.empty args
   block2 <- annotateBlock [initialEnv] block
-  let args2 = map (fmap (const voidType)) args
+  let args2 = map fmapVoidType args
   return (args2, block2)
 
 
@@ -229,7 +295,7 @@ annotateTopDef :: GlobalEnv -> TopDef LineData -> Err (TopDef VType)
 annotateTopDef globalEnv topDef =
   case topDef of
     (FnDef li rettype ident args block) -> do
-      let rettype2 = fmap (const voidType) rettype
+      let rettype2 = fmapVoidType rettype
       let env = FrontendEnv {lineData = li,
                             globalEnv= globalEnv,
                             returnType = void rettype,
@@ -238,19 +304,19 @@ annotateTopDef globalEnv topDef =
       return $ FnDef voidType rettype2 ident args2 block2
     (ClassDef _ cident ext classEls) -> do
       newClassEls <- mapM annotateClassEl classEls
-      let ext2 = fmap (const voidType) ext
+      let ext2 = fmapVoidType ext
       return $ ClassDef voidType cident ext2 newClassEls
       where
         annotateClassEl el = case el of
           MethodDef li rettype ident args block -> do
-            let rettype2 = fmap (const voidType) rettype
+            let rettype2 = fmapVoidType rettype
             let env = FrontendEnv {lineData = li,
                                   globalEnv = globalEnv,
                                   returnType = void rettype,
                                   inClass = findClass globalEnv cident}
             (args2, block2) <- runReaderT (annotateFun (args, block)) env
             return $ MethodDef voidType rettype2 ident args2 block2
-          _ -> return $ fmap (const voidType) el
+          _ -> return $ fmapVoidType el
 
 annotateTree :: Program LineData -> Program VType
 annotateTree (Program _ topdefs) = undefined topdefs
