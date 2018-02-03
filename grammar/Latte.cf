@@ -22,6 +22,7 @@ Arg. 	   Arg ::= Type Ident;
 
 separator  Arg "," ;
 
+
 -- statements ----------------------------------------------
 
 Block.     Block ::= "{" [Stmt] "}" ;
@@ -40,14 +41,14 @@ Init.      Item ::= Ident "=" Expr ;
 
 separator nonempty Item "," ;
 
-Ass.                Stmt ::= Ident "=" Expr  ";" ;
-internal AssSelf.   Stmt ::= "this." Ident "=" Expr  ";" ;
+Ass.       Stmt ::= Ident "=" Expr  ";" ;
+AssField.  Stmt ::= Expr "." Ident "=" Expr  ";" ;
 
-Incr.               Stmt ::= Ident "++"  ";" ;
-internal IncrSelf.  Stmt ::= "this." Ident "++"  ";" ;
+Incr.      Stmt ::= Ident "++"  ";" ;
+IncrField. Stmt ::= Expr "." Ident "++"  ";" ;
 
-Decr.               Stmt ::= Ident "--"  ";" ;
-internal DecrSelf.  Stmt ::= "this." Ident "--"  ";" ;
+Decr.      Stmt ::= Ident "--"  ";" ;
+DecrField. Stmt ::= Expr "." Ident "--"  ";" ;
 
 Ret.       Stmt ::= "return" Expr ";" ;
 
@@ -73,19 +74,15 @@ Bool.      Type ::= "boolean" ;
 
 Void.      Type ::= "void" ;
 
-Array.     Type ::= Type"[]" ;
+Array.     Type ::= Type "[]" ;
 
 Class.     Type ::= Ident ;
-
-internal   Fun. Type ::= Type "(" [Type] ")" ;
 
 separator  Type "," ;
 
 -- Expressions ---------------------------------------------
 
-ENull.    Expr6 ::= "null" ;
-
--- ECast.    Expr6 ::= "(" Type ")" Expr ;
+ENull.     Expr6 ::= "(" Type ")" "null" ;
 
 EVar.      Expr6 ::= Ident ;
 
@@ -94,6 +91,8 @@ ELitInt.   Expr6 ::= Integer ;
 ELitTrue.  Expr6 ::= "true" ;
 
 ELitFalse. Expr6 ::= "false" ;
+
+ENew.      Expr6 ::= "new" Type;
 
 EApp.      Expr6 ::= Ident "(" [Expr] ")" ;
 
@@ -117,8 +116,8 @@ EAnd.      Expr1 ::= Expr2 "&&" Expr1 ;
 
 EOr.       Expr ::= Expr1 "||" Expr ;
 
-internal ESelfField.    Expr ::= "this." Ident ;
-internal ESelfMethod.   Expr ::= "this." Ident "(" [Expr] ")" ;
+
+internal EThis. Expr ::= "this";
 
 coercions  Expr 6 ;
 

@@ -179,8 +179,7 @@ raiseError estr = do
 checkTypes :: VType -> [VType] -> FrontendM ()
 checkTypes type_ types =
   unless (type_ `elem` types) $ raiseError $
-    "type mismatch: " ++ show type_ ++ ", expected " ++ show types
-
+    "type mismatch: " ++ printTree type_ ++ ", expected " ++ printTree types
 
 findLocal :: VarEnv -> Ident -> Maybe VType
 findLocal (h:t) ident =
@@ -251,21 +250,22 @@ annotateExpr env expression =
   local (\fenv -> fenv {lineData = gcopoint expression}) comp
   where
     comp = case expression of
-      ENull _ -> undefined -- TODO
+      ENull _ _-> undefined -- TODO
       EVar _ ident -> do
         (type_, inClass) <- findVar env ident
         if inClass then
-          return $ ESelfField type_ ident
+          return $ EField type_ (EThis voidType) ident
         else
           return $ EVar type_ ident
       ELitInt _ integer -> return $ ELitInt intType integer
       ELitTrue _ -> return $ ELitTrue boolType
       ELitFalse _ -> return $ ELitFalse boolType
+      ENew _ type_ -> return $ ENew (void type_) (fmapVoidType type_)
       EApp _ ident exprs -> do
         (FunSig rtype argtypes, inClass) <- findFun ident
         newExprs <- annotateAndCheckArgs env ident exprs argtypes
         if inClass then
-          return $ ESelfMethod rtype ident newExprs
+          return $ EMethod rtype (EThis voidType) ident newExprs
         else
           return $ EApp rtype ident newExprs
       EString _ string -> return $ EString stringType string -- TODO sanitization?
@@ -319,8 +319,7 @@ annotateExpr env expression =
       EOr _ expr1 expr2 -> do
         (newExpr1, newExpr2) <- checkBoolTypes expr1 expr2
         return $ EOr boolType newExpr1 newExpr2
-      ESelfField {} -> error "should be internal"
-      ESelfMethod {} -> error "should be internal"
+      EThis _ -> error "'this.' should be internal"
       where
         checkBoolTypes expr1 expr2 = do
           newExpr1 <- annotateExpr env expr1
@@ -370,23 +369,26 @@ annotateStmt env stmt =
         newExpr <- annotateExpr env expr
         checkTypes (gcopoint newExpr) [type_]
         if inClass then
-          return (env, AssSelf voidType ident newExpr)
+          return (env, AssField voidType eThis ident newExpr)
         else
           return (env, Ass voidType ident newExpr)
+      AssField _ expr1 ident expr2 -> undefined -- TODO
       Incr _ ident -> do
         (type_, inClass) <- findVar env ident
         checkTypes type_ [intType]
         if inClass then
-          return (env, IncrSelf voidType ident)
+          return (env, IncrField voidType eThis ident)
         else
           return (env, Incr voidType ident)
+      IncrField _ expr ident -> undefined -- TODO
       Decr _ ident -> do
         (type_, inClass) <- findVar env ident
         checkTypes type_ [intType]
         if inClass then
-          return (env, DecrSelf voidType ident)
+          return (env, IncrField voidType eThis ident)
         else
           return (env, Decr voidType ident)
+      DecrField _ expr ident -> undefined -- TODO
       Ret _ expr -> do
         rtype <- returnType <$> ask
         newExpr <- annotateExpr env expr
@@ -416,9 +418,8 @@ annotateStmt env stmt =
       SExp _ expr -> do
         newExpr <- annotateExpr env expr
         return (env, SExp voidType newExpr)
-      AssSelf {} -> error "should be internal"
-      IncrSelf {} -> error "should be internal"
-      DecrSelf {} -> error "should be internal"
+      where
+        eThis = (EThis voidType)
 
 
 annotateBlock :: VarEnv -> Block LineData  -> FrontendM (Block VType)
