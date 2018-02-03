@@ -76,6 +76,10 @@ boolType = Bool ()
 fmapVoidType :: Functor a => a b -> a VType
 fmapVoidType = fmap (const voidType)
 
+extractClassName :: Type a -> Maybe Ident
+extractClassName (Class _ ident) = Just ident
+extractClassName _ = Nothing
+
 processTopDef :: Show a => GlobalEnv -> TopDef a -> Err GlobalEnv
 processTopDef (GlobalEnv cl fl) (FnDef li type_ ident args _) = do
   when (isJust $ lookup ident fl) $
@@ -177,6 +181,7 @@ checkTypes type_ types =
   unless (type_ `elem` types) $ raiseError $
     "type mismatch: " ++ show type_ ++ ", expected " ++ show types
 
+
 findLocal :: VarEnv -> Ident -> Maybe VType
 findLocal (h:t) ident =
   case Map.lookup ident h of
@@ -184,18 +189,62 @@ findLocal (h:t) ident =
     Nothing    -> findLocal t ident
 findLocal [] _ = Nothing
 
+findClassEl :: Ident -> (ClassSig -> [(Ident, a)]) -> ClassSig -> Maybe a
+findClassEl ident accessor classSig =
+  let index = accessor classSig in
+  case lookup ident index of
+    Just x -> Just x
+    Nothing -> findInSuper accessor (super classSig) ident
+
+findClassAndEl :: GlobalEnv -> Ident -> (ClassSig -> [(Ident, a)]) ->
+   Ident -> Maybe a
+findClassAndEl env ident accessor classIdent = do
+  classSig <- findClass env classIdent
+  let index = accessor classSig
+  lookup ident index
+
 findVar :: VarEnv -> Ident -> FrontendM (VType, Bool)
 findVar env ident =
   case findLocal env ident of
     Just type_ -> return (type_, False)
-    Nothing    -> raiseError "variable not found" -- TODO class
+    Nothing    -> do
+      classSig <- inClass <$> ask
+      case classSig >>= findClassEl ident fields of
+        Just type_ -> return (type_, True)
+        Nothing -> raiseError $ "variable " ++ show ident ++ " not found"
 
 findFun :: Ident -> FrontendM (FunSig, Bool)
 findFun ident = do
   GlobalEnv _ globalFuns <- globalEnv <$> ask
   case lookup ident globalFuns of
     Just funSig -> return (funSig, False)
-    Nothing -> raiseError "function not found" -- TODO class
+    Nothing -> do
+      classSig <- inClass <$> ask
+      case classSig >>= findClassEl ident methods of
+        Just sig -> return (sig, True)
+        Nothing -> raiseError $ "procedure " ++ show ident ++ " not found"
+
+findAndAnnotate :: VarEnv -> Expr LineData -> Ident ->
+  (ClassSig -> [(Ident, a)]) -> FrontendM (Expr VType, a)
+findAndAnnotate env expr ident accessor = do
+  newExpr <- annotateExpr env expr
+  genv <- globalEnv <$> ask
+  result <-
+    case extractClassName (gcopoint newExpr) >>= findClassAndEl genv ident accessor of
+      Just type_ -> return type_
+      Nothing -> raiseError $
+        printTree expr ++ " does not have an element called " ++ show ident
+  return (newExpr, result)
+
+annotateAndCheckArgs :: VarEnv -> Ident -> [Expr LineData] -> [VType] ->
+  FrontendM [Expr VType]
+annotateAndCheckArgs env ident exprs argtypes = do
+  newExprs <- forM exprs $ annotateExpr env
+  when (length exprs /= length argtypes) $ raiseError $
+    "incorrect number of parameter to function "++ show ident ++
+    ", expected " ++ show (length argtypes) ++ " got " ++ show (length exprs)
+  zipWithM_ (\x y -> checkTypes (gcopoint x) [y]) newExprs argtypes
+  return newExprs
 
 annotateExpr :: VarEnv -> Expr LineData -> FrontendM (Expr VType)
 annotateExpr env expression =
@@ -214,18 +263,19 @@ annotateExpr env expression =
       ELitFalse _ -> return $ ELitFalse boolType
       EApp _ ident exprs -> do
         (FunSig rtype argtypes, inClass) <- findFun ident
-        newExprs <- forM exprs $ annotateExpr env
-        when (length exprs /= length argtypes) $ raiseError $
-          "incorrect number of parameter to function "++ show ident ++
-          ", expected " ++ show (length argtypes) ++ " got " ++ show (length exprs)
-        zipWithM_ (\x y -> checkTypes (gcopoint x) [y]) newExprs argtypes
+        newExprs <- annotateAndCheckArgs env ident exprs argtypes
         if inClass then
           return $ ESelfMethod rtype ident newExprs
         else
           return $ EApp rtype ident newExprs
       EString _ string -> return $ EString stringType string -- TODO sanitization?
-      EField {} -> undefined -- TODO
-      EMethod {} -> undefined -- TODO
+      EField _ expr ident -> do
+        (newExpr, type_) <- findAndAnnotate env expr ident fields
+        return $ EField type_ newExpr ident
+      EMethod _ expr ident exprs -> do
+        (newExpr, FunSig rtype argtypes) <- findAndAnnotate env expr ident methods
+        newExprs <- annotateAndCheckArgs env ident exprs argtypes
+        return $ EMethod rtype newExpr ident newExprs
       Neg _ expr -> do
         newExpr <- annotateExpr env expr
         checkTypes (gcopoint newExpr) [intType]
@@ -278,8 +328,6 @@ annotateExpr env expression =
           newExpr2 <- annotateExpr env expr2
           checkTypes (gcopoint newExpr2) [boolType]
           return (newExpr1, newExpr2)
-
-
 
 annotateBlockVar :: VType -> (VarEnv, [Item VType]) -> Item LineData ->
   FrontendM (VarEnv, [Item VType])
@@ -423,11 +471,22 @@ annotateTopDef globalEnv topDef =
             return $ MethodDef voidType rettype2 ident args2 block2
           _ -> return $ fmapVoidType el
 
+checkMain :: GlobalEnv -> Err ()
+checkMain (GlobalEnv _ fl) = do
+  (FunSig rtype argtypes) <- case lookup (Ident "main") fl of
+    Just x -> return x
+    Nothing -> Left "main function not found"
+  unless (rtype == intType) $
+    Left "main should return int"
+  unless (null argtypes) $
+    Left "main should not accept any arguments"
+
+
 annotateTree :: Program LineData -> Err (Program VType)
 annotateTree (Program _ topdefs) = do
-  _globalEnv <- generateSignatures (predefs' ++ topdefs)
+  _globalEnv <- foldM processTopDef (GlobalEnv [] []) (predefs' ++ topdefs)
+  checkMain _globalEnv
   newTopdefs <- forM topdefs $ annotateTopDef _globalEnv
-  -- TODO check main
   return $ Program voidType newTopdefs
 
 getRepr :: String -> Err (Program VType)
@@ -435,10 +494,6 @@ getRepr s =
   case pProgram $ myLexer s of
     ErrM.Bad e -> Left e
     ErrM.Ok p -> annotateTree $ fmap LineData p
-
-generateSignatures :: Show a => [TopDef a] -> Err GlobalEnv
-generateSignatures defs =
-  foldM processTopDef (GlobalEnv [] []) defs
 
 predefs' :: [TopDef LineData]
 predefs' = [
