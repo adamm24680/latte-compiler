@@ -1,7 +1,7 @@
 module Frontend
   (getRepr, Err, predefs,
   VType, voidType, intType, stringType, boolType,
-  FunSig(..), makeFunSig, Program)
+  FunSig(..), ClassSig(..), GlobalEnv (..), makeFunSig, Program)
     where
 
 import           AbsLatte
@@ -40,10 +40,11 @@ instance Show LineData where
 type Err = Either String
 type VType = Type ()
 data FunSig = FunSig VType [VType] deriving (Eq)
-data ClassSig = ClassSig { super     :: Maybe ClassSig,
+data ClassSig = ClassSig { name      :: Ident,
+                           super     :: Maybe ClassSig,
                            fields    :: [(Ident, VType)],
                            methods   :: [(Ident, FunSig)],
-                           overrides :: [Ident] }
+                           overrides :: [Ident] } deriving (Eq)
 data GlobalEnv = GlobalEnv [(Ident, ClassSig)] [(Ident, FunSig)]
 data FrontendEnv = FrontendEnv { globalEnv  :: GlobalEnv,
                                  lineData   :: LineData,
@@ -95,7 +96,8 @@ processTopDef (GlobalEnv cl fl) (ClassDef li ident classext classels) = do
   declMethods <- foldM processMethodSignature [] classels
   declFields <- foldM processFieldDecl [] classels
   (newMethods, overrides) <- splitMethods declMethods
-  let class_ = ClassSig {super = super,
+  let class_ = ClassSig {name = ident,
+                        super = super,
                         fields = declFields,
                         methods = newMethods,
                         overrides = overrides}
@@ -176,9 +178,23 @@ raiseError estr = do
   li <- lineData <$> ask
   lift $ Left (estr ++ show li)
 
+isSuper :: GlobalEnv -> VType -> VType -> Bool
+isSuper genv (Class () subIdent) (Class () superIdent) =
+  let {checkSub superSig subSig =
+    if superSig == subSig then
+      Just ()
+    else
+      super subSig >>= checkSub superSig} in
+  isJust $ do
+    superSig <- findClass genv superIdent
+    subSig <- findClass genv subIdent
+    checkSub superSig subSig
+isSuper _ a b = a == b
+
 checkTypes :: VType -> [VType] -> FrontendM ()
-checkTypes type_ types =
-  unless (type_ `elem` types) $ raiseError $
+checkTypes type_ types = do
+  genv <- globalEnv <$> ask
+  unless (any (isSuper genv type_) types) $ raiseError $
     "type mismatch: " ++ printTree type_ ++ ", expected " ++ printTree types
 
 findLocal :: VarEnv -> Ident -> Maybe VType
@@ -202,25 +218,33 @@ findClassAndEl env ident accessor classIdent = do
   let index = accessor classSig
   lookup ident index
 
-findVar :: VarEnv -> Ident -> FrontendM (VType, Bool)
+findVar :: VarEnv -> Ident -> FrontendM (VType, Maybe VType)
 findVar env ident =
   case findLocal env ident of
-    Just type_ -> return (type_, False)
+    Just type_ -> return (type_, Nothing)
     Nothing    -> do
       classSig <- inClass <$> ask
-      case classSig >>= findClassEl ident fields of
-        Just type_ -> return (type_, True)
+      let {comp = do
+        csig <- classSig
+        type_ <- findClassEl ident fields csig
+        return (type_, name csig)}
+      case comp of
+        Just (type_, ident) -> return (type_, Just $ Class () ident)
         Nothing -> raiseError $ "variable " ++ show ident ++ " not found"
 
-findFun :: Ident -> FrontendM (FunSig, Bool)
+findFun :: Ident -> FrontendM (FunSig, Maybe VType)
 findFun ident = do
   GlobalEnv _ globalFuns <- globalEnv <$> ask
   case lookup ident globalFuns of
-    Just funSig -> return (funSig, False)
+    Just funSig -> return (funSig, Nothing)
     Nothing -> do
       classSig <- inClass <$> ask
-      case classSig >>= findClassEl ident methods of
-        Just sig -> return (sig, True)
+      let {comp = do
+        csig <- classSig
+        type_ <- findClassEl ident methods csig
+        return (type_, name csig)}
+      case comp of
+        Just (sig, ident) -> return (sig, Just $ Class () ident)
         Nothing -> raiseError $ "procedure " ++ show ident ++ " not found"
 
 findAndAnnotate :: VarEnv -> Expr LineData -> Ident ->
@@ -245,18 +269,26 @@ annotateAndCheckArgs env ident exprs argtypes = do
   zipWithM_ (\x y -> checkTypes (gcopoint x) [y]) newExprs argtypes
   return newExprs
 
+
 annotateExpr :: VarEnv -> Expr LineData -> FrontendM (Expr VType)
 annotateExpr env expression =
   local (\fenv -> fenv {lineData = gcopoint expression}) comp
   where
     comp = case expression of
-      ENull _ _-> undefined -- TODO
+      ENull _ ident -> do
+        genv <- globalEnv <$> ask
+        case findClass genv ident of
+          Just _ ->
+            return $ ENull (Class () ident) ident
+          Nothing ->
+            raiseError $ "class " ++ show ident ++ " not found"
       EVar _ ident -> do
         (type_, inClass) <- findVar env ident
-        if inClass then
-          return $ EField type_ (EThis voidType) ident
-        else
-          return $ EVar type_ ident
+        case inClass of
+          Just cType ->
+            return $ EField type_ (EThis cType) ident
+          Nothing ->
+            return $ EVar type_ ident
       ELitInt _ integer -> return $ ELitInt intType integer
       ELitTrue _ -> return $ ELitTrue boolType
       ELitFalse _ -> return $ ELitFalse boolType
@@ -264,10 +296,11 @@ annotateExpr env expression =
       EApp _ ident exprs -> do
         (FunSig rtype argtypes, inClass) <- findFun ident
         newExprs <- annotateAndCheckArgs env ident exprs argtypes
-        if inClass then
-          return $ EMethod rtype (EThis voidType) ident newExprs
-        else
-          return $ EApp rtype ident newExprs
+        case inClass of
+          Just cType ->
+            return $ EMethod rtype (EThis cType) ident newExprs
+          Nothing ->
+            return $ EApp rtype ident newExprs
       EString _ string -> return $ EString stringType string -- TODO sanitization?
       EField _ expr ident -> do
         (newExpr, type_) <- findAndAnnotate env expr ident fields
@@ -303,23 +336,34 @@ annotateExpr env expression =
             Minus _ -> [intType]
       ERel _ expr1 relop expr2 -> do
         newExpr1 <- annotateExpr env expr1
-        let type_ = gcopoint newExpr1
-        checkTypes type_ expectedTypes
         newExpr2 <- annotateExpr env expr2
-        checkTypes (gcopoint newExpr2) [type_]
+        let type1 = gcopoint newExpr1
+        let type2 = gcopoint newExpr2
+        case relop of
+          EQU _ -> checkEqTypes type1 type2
+          NE _  -> checkEqTypes type1 type2
+          _ -> do
+            checkTypes type1 [intType]
+            checkTypes type2 [intType]
         return $ ERel boolType newExpr1 (fmapVoidType relop) newExpr2
         where
-          expectedTypes = case relop of
-            EQU _ -> [stringType, intType, boolType]
-            NE _  -> [stringType, intType, boolType]
-            _     -> [intType]
+          checkEqTypes (Class () _) (Class () _) = return ()
+          checkEqTypes type1 type2 = unless (type1 == type2) $ raiseError $
+            "type mismatch: " ++ printTree expr1 ++
+            " has type "++ printTree type1 ++
+            " while " ++ printTree expr2 ++
+            " has type " ++ printTree type2
       EAnd _ expr1 expr2 -> do
         (newExpr1, newExpr2) <- checkBoolTypes expr1 expr2
         return $ EAnd boolType newExpr1 newExpr2
       EOr _ expr1 expr2 -> do
         (newExpr1, newExpr2) <- checkBoolTypes expr1 expr2
         return $ EOr boolType newExpr1 newExpr2
-      EThis _ -> error "'this.' should be internal"
+      EThis _ -> do
+        classSig <- inClass <$> ask
+        case classSig of
+          Just sig -> return $ EThis (Class () $ name sig)
+          Nothing -> raiseError "'self.' outside class"
       where
         checkBoolTypes expr1 expr2 = do
           newExpr1 <- annotateExpr env expr1
@@ -368,27 +412,40 @@ annotateStmt env stmt =
         (type_, inClass) <- findVar env ident
         newExpr <- annotateExpr env expr
         checkTypes (gcopoint newExpr) [type_]
-        if inClass then
-          return (env, AssField voidType eThis ident newExpr)
-        else
-          return (env, Ass voidType ident newExpr)
-      AssField _ expr1 ident expr2 -> undefined -- TODO
+        case inClass of
+          Just cType ->
+            return (env, AssField voidType (EThis cType) ident newExpr)
+          Nothing ->
+            return (env, Ass voidType ident newExpr)
+      AssField _ expr1 ident expr2 -> do
+        (newExpr1, type_) <- findAndAnnotate env expr1 ident fields
+        newExpr2 <- annotateExpr env expr2
+        checkTypes (gcopoint newExpr2) [type_]
+        return (env, AssField voidType newExpr1 ident newExpr2)
       Incr _ ident -> do
         (type_, inClass) <- findVar env ident
         checkTypes type_ [intType]
-        if inClass then
-          return (env, IncrField voidType eThis ident)
-        else
-          return (env, Incr voidType ident)
-      IncrField _ expr ident -> undefined -- TODO
+        case inClass of
+          Just cType ->
+            return (env, IncrField voidType (EThis cType) ident)
+          Nothing ->
+            return (env, Incr voidType ident)
+      IncrField _ expr ident -> do
+        (newExpr, type_) <- findAndAnnotate env expr ident fields
+        checkTypes type_ [intType]
+        return (env, IncrField voidType newExpr ident)
       Decr _ ident -> do
         (type_, inClass) <- findVar env ident
         checkTypes type_ [intType]
-        if inClass then
-          return (env, IncrField voidType eThis ident)
-        else
-          return (env, Decr voidType ident)
-      DecrField _ expr ident -> undefined -- TODO
+        case inClass of
+          Just cType ->
+            return (env, DecrField voidType (EThis cType) ident)
+          Nothing ->
+            return (env, Decr voidType ident)
+      DecrField _ expr ident -> do
+        (newExpr, type_) <- findAndAnnotate env expr ident fields
+        checkTypes type_ [intType]
+        return (env, DecrField voidType newExpr ident)
       Ret _ expr -> do
         rtype <- returnType <$> ask
         newExpr <- annotateExpr env expr
@@ -418,8 +475,6 @@ annotateStmt env stmt =
       SExp _ expr -> do
         newExpr <- annotateExpr env expr
         return (env, SExp voidType newExpr)
-      where
-        eThis = (EThis voidType)
 
 
 annotateBlock :: VarEnv -> Block LineData  -> FrontendM (Block VType)
@@ -483,14 +538,14 @@ checkMain (GlobalEnv _ fl) = do
     Left "main should not accept any arguments"
 
 
-annotateTree :: Program LineData -> Err (Program VType)
+annotateTree :: Program LineData -> Err (Program VType, GlobalEnv)
 annotateTree (Program _ topdefs) = do
   _globalEnv <- foldM processTopDef (GlobalEnv [] []) (predefs' ++ topdefs)
   checkMain _globalEnv
   newTopdefs <- forM topdefs $ annotateTopDef _globalEnv
-  return $ Program voidType newTopdefs
+  return  (Program voidType newTopdefs, _globalEnv)
 
-getRepr :: String -> Err (Program VType)
+getRepr :: String -> Err (Program VType, GlobalEnv)
 getRepr s =
   case pProgram $ myLexer s of
     ErrM.Bad e -> Left e

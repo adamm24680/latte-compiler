@@ -469,8 +469,8 @@ genFun initEnv (FnDef x type_ ident args block) =
       Nothing -> emit $ QVRet}
   in makeFun initEnv (void type_) ident args gen
 
-genProgram :: Program VType -> [QFunDef (Label, Graph (Quad Operand) C C)]
-genProgram (Program _ topdefs) =
+genProgram :: (Program VType, GlobalEnv) -> [QFunDef (Label, Graph (Quad Operand) C C)]
+genProgram (Program _ topdefs, genv) =
   let predefinfos = map (makeFunInfo True) Frontend.predefs
       infos = map (makeFunInfo False) topdefs
       initEnv = foldl insertFunInfo newEnv $ infos ++ predefinfos

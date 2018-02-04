@@ -42,13 +42,13 @@ Init.      Item ::= Ident "=" Expr ;
 separator nonempty Item "," ;
 
 Ass.       Stmt ::= Ident "=" Expr  ";" ;
-AssField.  Stmt ::= Expr "." Ident "=" Expr  ";" ;
+AssField.  Stmt ::= Expr6 "." Ident "=" Expr  ";" ;
 
 Incr.      Stmt ::= Ident "++"  ";" ;
-IncrField. Stmt ::= Expr "." Ident "++"  ";" ;
+IncrField. Stmt ::= Expr6 "." Ident "++"  ";" ;
 
 Decr.      Stmt ::= Ident "--"  ";" ;
-DecrField. Stmt ::= Expr "." Ident "--"  ";" ;
+DecrField. Stmt ::= Expr6 "." Ident "--"  ";" ;
 
 Ret.       Stmt ::= "return" Expr ";" ;
 
@@ -82,7 +82,9 @@ separator  Type "," ;
 
 -- Expressions ---------------------------------------------
 
-ENull.     Expr6 ::= "(" Type ")" "null" ;
+ENull.     Expr6 ::= "(" Ident")" "null" ;
+
+EThis.     Expr6 ::= "self";
 
 EVar.      Expr6 ::= Ident ;
 
@@ -116,8 +118,6 @@ EAnd.      Expr1 ::= Expr2 "&&" Expr1 ;
 
 EOr.       Expr ::= Expr1 "||" Expr ;
 
-
-internal EThis. Expr ::= "this";
 
 coercions  Expr 6 ;
 
