@@ -173,7 +173,7 @@ storeVar ident val = do
 
 genInitClass :: ClassSig -> GenM Operand
 genInitClass classSig = do
-  let fields = [] -- TODO
+  let fields = getFields $ Just classSig -- TODO
   let size = 4 + 4 * length fields
   emitParam $ LitInt $ toInteger size
   allocated <- emitCallExternal "malloc"
@@ -185,6 +185,8 @@ genInitClass classSig = do
        value <- genExpr (defaultValue type_)
        field <- emitGetFieldAddress base (Class () $ name classSig) ident
        emitStore field value
+    getFields (Just classSig) = getFields (super classSig) ++ []
+    getFields Nothing = []
 
 genCall :: Ident -> GenM Operand
 genCall ident =

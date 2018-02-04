@@ -5,14 +5,16 @@ import           System.Process    (callCommand)
 import           Text.Printf
 
 main :: IO ()
-main = core >> bad
+main = core >> struct >> bad
 
 core :: IO ()
-core = forM_ [1..22] (coreTestCase "lattests/good/core")
-
+core = forM_ [1..22] (coreTestCase "good/core")
 
 bad :: IO ()
-bad = forM_ [1..27] (testBad "lattests/bad/bad")
+bad = forM_ [1..27] (testBad "bad/bad")
+
+struct :: IO ()
+struct = testCase "extensions/struct/list"
 
 coreTestCase :: String -> Int -> IO ()
 coreTestCase base i =
@@ -20,7 +22,8 @@ coreTestCase base i =
   testCase name
 
 testCase :: String -> IO ()
-testCase name = do
+testCase tname = do
+  let name = "lattests/" ++ tname
   let inputName = name ++ ".input"
   let latFileName = name ++ ".lat"
   let outputName = name ++ ".output"
@@ -37,7 +40,7 @@ testCase name = do
 
 testBad :: String -> Int -> IO ()
 testBad base i = do
-  let name = printf "%s%03d" base i
+  let name = printf "lattests/%s%03d" base i
   let latFileName = name ++ ".lat"
   (try :: IO a -> IO (Either IOException a)) (callCommand $ "stack exec latc_x86 " ++ latFileName)
   return ()
