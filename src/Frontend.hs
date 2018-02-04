@@ -1,7 +1,7 @@
 module Frontend
-  (getRepr, Err, predefs,
-  VType, voidType, intType, stringType, boolType,
-  FunSig(..), ClassSig(..), GlobalEnv (..), makeFunSig, Program)
+  (getRepr, Err, predefs, findClass,
+  VType, voidType, intType, stringType, boolType, extractClassName,
+  FunSig(..), ClassSig(..), GlobalEnv (..), makeFunSig, Program, isPredef)
     where
 
 import           AbsLatte
@@ -62,7 +62,7 @@ checkParamRedeclaration :: Show a => [Arg a] -> Err ()
 checkParamRedeclaration =
   let {foldf acc (Arg li _ ident) =
     if ident `elem` acc then
-       Left $ "parameter " ++ show ident ++ "redeclared" ++ show li
+       Left $ "parameter " ++ printTree ident ++ "redeclared" ++ show li
     else
       return $ ident : acc } in
   foldM_ foldf []
@@ -79,19 +79,19 @@ fmapVoidType = fmap (const voidType)
 
 extractClassName :: Type a -> Maybe Ident
 extractClassName (Class _ ident) = Just ident
-extractClassName _ = Nothing
+extractClassName _               = Nothing
 
 processTopDef :: Show a => GlobalEnv -> TopDef a -> Err GlobalEnv
 processTopDef (GlobalEnv cl fl) (FnDef li type_ ident args _) = do
   when (isJust $ lookup ident fl) $
-    Left $ "global function " ++ show ident ++ "redeclared" ++ show li
+    Left $ "global function " ++ printTree ident ++ "redeclared" ++ show li
   checkParamRedeclaration args
   return $ GlobalEnv cl ((ident, funSig) : fl)
   where
     funSig = makeFunSig type_ args
 processTopDef (GlobalEnv cl fl) (ClassDef li ident classext classels) = do
   when (isJust $ lookup ident cl) $
-    Left ("class " ++ show ident ++ "redeclared" ++ show li )
+    Left ("class " ++ printTree ident ++ "redeclared" ++ show li )
   super <- superClass
   declMethods <- foldM processMethodSignature [] classels
   declFields <- foldM processFieldDecl [] classels
@@ -106,8 +106,8 @@ processTopDef (GlobalEnv cl fl) (ClassDef li ident classext classels) = do
     superClass = case classext of
       Extends exli exident ->
         case lookup exident cl of
-          Nothing -> Left ("unknown superclass " ++ show exident ++
-            " in declaration of " ++ show ident ++ show exli)
+          Nothing -> Left ("unknown superclass " ++ printTree exident ++
+            " in declaration of " ++ printTree ident ++ show exli)
           Just x -> return $ Just x
       NoExtend _ -> return Nothing
     splitMethods :: [(Ident, FunSig)] -> Err ([(Ident, FunSig)], [Ident])
@@ -121,12 +121,12 @@ processTopDef (GlobalEnv cl fl) (ClassDef li ident classext classels) = do
     processMethodSignature ml (MethodDef li type_ ident args _) = do
       let sig = makeFunSig type_ args
       when (isJust $ lookup ident fl) $
-        Left $ "global function " ++ show ident ++ "redeclared" ++ show li
+        Left $ "global function " ++ printTree ident ++ "redeclared" ++ show li
       when (isJust $ lookup ident ml) $
-        Left $ "class method " ++ show ident ++ "redeclared" ++ show li
+        Left $ "class method " ++ printTree ident ++ "redeclared" ++ show li
       super1 <- superClass
       when (fromMaybe sig (findInSuper methods super1 ident) /= sig) $
-        Left $ "invalid superclass method override in " ++ show ident ++ show li
+        Left $ "invalid superclass method override in " ++ printTree ident ++ show li
       checkParamRedeclaration args
       Right $ (ident, sig) : ml
     processMethodSignature x _ = return x
@@ -135,10 +135,10 @@ processTopDef (GlobalEnv cl fl) (ClassDef li ident classext classels) = do
     processFieldDecl fieldl (FieldDef li type_ idents) = do
       let {checkFieldRedeclaration ident = do
         when (isJust $ lookup ident fieldl) $
-          Left ("class field " ++ show ident ++ " redeclared" ++ show li)
+          Left ("class field " ++ printTree ident ++ " redeclared" ++ show li)
         super1 <- superClass
         when (isJust $ findInSuper fields super1 ident) $
-          Left ("superclass field " ++ show ident ++ " redeclared" ++ show li)
+          Left ("superclass field " ++ printTree ident ++ " redeclared" ++ show li)
         }
       forM_ idents checkFieldRedeclaration
       return $ fieldl ++ map (\i -> (i, void type_)) idents
@@ -208,15 +208,15 @@ findClassEl :: Ident -> (ClassSig -> [(Ident, a)]) -> ClassSig -> Maybe a
 findClassEl ident accessor classSig =
   let index = accessor classSig in
   case lookup ident index of
-    Just x -> Just x
+    Just x  -> Just x
     Nothing -> findInSuper accessor (super classSig) ident
 
 findClassAndEl :: GlobalEnv -> Ident -> (ClassSig -> [(Ident, a)]) ->
    Ident -> Maybe a
 findClassAndEl env ident accessor classIdent = do
   classSig <- findClass env classIdent
-  let index = accessor classSig
-  lookup ident index
+  findClassEl ident accessor classSig
+
 
 findVar :: VarEnv -> Ident -> FrontendM (VType, Maybe VType)
 findVar env ident =
@@ -230,7 +230,7 @@ findVar env ident =
         return (type_, name csig)}
       case comp of
         Just (type_, ident) -> return (type_, Just $ Class () ident)
-        Nothing -> raiseError $ "variable " ++ show ident ++ " not found"
+        Nothing -> raiseError $ "variable " ++ printTree ident ++ " not found"
 
 findFun :: Ident -> FrontendM (FunSig, Maybe VType)
 findFun ident = do
@@ -245,7 +245,7 @@ findFun ident = do
         return (type_, name csig)}
       case comp of
         Just (sig, ident) -> return (sig, Just $ Class () ident)
-        Nothing -> raiseError $ "procedure " ++ show ident ++ " not found"
+        Nothing -> raiseError $ "procedure " ++ printTree ident ++ " not found"
 
 findAndAnnotate :: VarEnv -> Expr LineData -> Ident ->
   (ClassSig -> [(Ident, a)]) -> FrontendM (Expr VType, a)
@@ -256,7 +256,7 @@ findAndAnnotate env expr ident accessor = do
     case extractClassName (gcopoint newExpr) >>= findClassAndEl genv ident accessor of
       Just type_ -> return type_
       Nothing -> raiseError $
-        printTree expr ++ " does not have an element called " ++ show ident
+        printTree expr ++ " does not have an element called " ++ printTree ident
   return (newExpr, result)
 
 annotateAndCheckArgs :: VarEnv -> Ident -> [Expr LineData] -> [VType] ->
@@ -264,7 +264,7 @@ annotateAndCheckArgs :: VarEnv -> Ident -> [Expr LineData] -> [VType] ->
 annotateAndCheckArgs env ident exprs argtypes = do
   newExprs <- forM exprs $ annotateExpr env
   when (length exprs /= length argtypes) $ raiseError $
-    "incorrect number of parameter to function "++ show ident ++
+    "incorrect number of parameter to function "++ printTree ident ++
     ", expected " ++ show (length argtypes) ++ " got " ++ show (length exprs)
   zipWithM_ (\x y -> checkTypes (gcopoint x) [y]) newExprs argtypes
   return newExprs
@@ -281,7 +281,7 @@ annotateExpr env expression =
           Just _ ->
             return $ ENull (Class () ident) ident
           Nothing ->
-            raiseError $ "class " ++ show ident ++ " not found"
+            raiseError $ "class " ++ printTree ident ++ " not found"
       EVar _ ident -> do
         (type_, inClass) <- findVar env ident
         case inClass of
@@ -292,7 +292,11 @@ annotateExpr env expression =
       ELitInt _ integer -> return $ ELitInt intType integer
       ELitTrue _ -> return $ ELitTrue boolType
       ELitFalse _ -> return $ ELitFalse boolType
-      ENew _ type_ -> return $ ENew (void type_) (fmapVoidType type_)
+      ENew _ ident -> do
+        genv <- globalEnv <$> ask
+        unless (isJust $ findClass genv ident) $ raiseError $
+          "class " ++ printTree ident ++ " not found"
+        return $ ENew (Class () ident) ident
       EApp _ ident exprs -> do
         (FunSig rtype argtypes, inClass) <- findFun ident
         newExprs <- annotateAndCheckArgs env ident exprs argtypes
@@ -363,7 +367,7 @@ annotateExpr env expression =
         classSig <- inClass <$> ask
         case classSig of
           Just sig -> return $ EThis (Class () $ name sig)
-          Nothing -> raiseError "'self.' outside class"
+          Nothing  -> raiseError "'self.' outside class"
       where
         checkBoolTypes expr1 expr2 = do
           newExpr1 <- annotateExpr env expr1
@@ -389,7 +393,7 @@ annotateBlockVar type_ (env@(currentEnv : rest), acc) item =
     insertDeclaration ident type_ = do
       li <- lineData <$> ask
       when (ident `Map.member` currentEnv)
-        (lift $ Left $ "block variable " ++ show ident ++ "redeclared" ++ show li)
+        (lift $ Left $ "block variable " ++ printTree ident ++ " redeclared" ++ show li)
       return $ Map.insert ident (void type_) currentEnv
 annotateBlockVar _ _ _ = error "empty item list (should not parse)"
 
@@ -530,7 +534,7 @@ annotateTopDef globalEnv topDef =
 checkMain :: GlobalEnv -> Err ()
 checkMain (GlobalEnv _ fl) = do
   (FunSig rtype argtypes) <- case lookup (Ident "main") fl of
-    Just x -> return x
+    Just x  -> return x
     Nothing -> Left "main function not found"
   unless (rtype == intType) $
     Left "main should return int"
@@ -549,7 +553,7 @@ getRepr :: String -> Err (Program VType, GlobalEnv)
 getRepr s =
   case pProgram $ myLexer s of
     ErrM.Bad e -> Left e
-    ErrM.Ok p -> annotateTree $ fmap LineData p
+    ErrM.Ok p  -> annotateTree $ fmap LineData p
 
 predefs' :: [TopDef LineData]
 predefs' = [
@@ -563,3 +567,11 @@ predefs' = [
 
 predefs :: [TopDef VType]
 predefs = map fmapVoidType predefs'
+
+isPredef :: Ident -> Bool
+isPredef ident =
+  let {extractIdent x =
+        case x of
+          FnDef _ _ fident _ _ -> [fident]
+          _                    -> [] } in
+  ident `elem` concatMap extractIdent predefs

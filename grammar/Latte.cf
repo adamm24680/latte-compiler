@@ -94,7 +94,7 @@ ELitTrue.  Expr6 ::= "true" ;
 
 ELitFalse. Expr6 ::= "false" ;
 
-ENew.      Expr6 ::= "new" Type;
+ENew.      Expr6 ::= "new" Ident;
 
 EApp.      Expr6 ::= Ident "(" [Expr] ")" ;
 

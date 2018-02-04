@@ -12,7 +12,11 @@ import           Data.Maybe
 import qualified Data.Set            as Set
 
 
-data PhysOp t = PhysReg t | Constant Integer | StackSlot Int| NoReg deriving Eq
+data PhysOp t = PhysReg t |
+                Constant Integer |
+                StackSlot Int |
+                StackParam Int |
+                NoReg deriving Eq
 
 
 data LsState t = LsState {
@@ -88,6 +92,7 @@ linearScan regs (anns, prog) =
                  active = Set.empty, spilled = Set.empty, dump=[] }
     spillMap = Map.fromList $ zip (Set.toList spills) [0.. Set.size spills - 1]
     mappingFun (LitInt i) = Constant i
+    mappingFun (Param i) = StackParam i
     mappingFun reg =
       case Map.lookup reg mapped of
         Just regid -> PhysReg regid

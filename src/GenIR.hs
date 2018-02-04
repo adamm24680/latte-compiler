@@ -7,22 +7,20 @@ module GenIR
   where
 
 import           AbsLatte
-import           Compiler.Hoopl    (C, Graph, Label, O, Unique, UniqueMonad,
-                                    emptyClosedGraph, freshLabel, freshUnique,
-                                    mkFirst, mkLast, mkMiddles, showGraph,
-                                    (|*><*|))
-import qualified Compiler.Hoopl    as H ((<*>))
+import           Compiler.Hoopl            (C, Graph, Label, O, Unique,
+                                            UniqueMonad, emptyClosedGraph,
+                                            freshLabel, freshUnique, mkFirst,
+                                            mkLast, mkMiddles, showGraph,
+                                            (|*><*|))
+import qualified Compiler.Hoopl            as H ((<*>))
 import           Control.Monad
 import           Control.Monad.RWS
-import qualified Data.Map          as Map
+import qualified Data.Map                  as Map
 import           Data.Maybe
 import           Frontend
+import           Generics.Deriving.Copoint (gcopoint)
 import           IR
 import           Text.Printf
-import  Generics.Deriving.Copoint (gcopoint)
-
-
-data VarLoc = Stack Operand | Param Int
 
 
 data GenState = GenState {
@@ -30,15 +28,11 @@ data GenState = GenState {
   regCounter:: Integer
   }
 
-data FunInfo  = FunInfo {
-  funIdent :: Ident,
-  funType  :: FunSig,
-  isPredef :: Bool
-}
-
 data GenEnv = GenEnv {
-  varInfo :: Map.Map Ident (VarLoc, VType),
-  funInfo :: Map.Map Ident FunInfo}
+  varInfo   :: Map.Map Ident (Operand, VType),
+  globalEnv :: GlobalEnv,
+  inClass   :: Maybe ClassSig
+}
 
 type GenM = RWS GenEnv [Ins Operand] GenState
 
@@ -53,34 +47,50 @@ newState :: GenState
 newState =
   GenState {uniqueC = 0, regCounter = 0}
 
-newEnv :: GenEnv
-newEnv =
-  GenEnv { varInfo = Map.empty, funInfo = Map.empty}
+newEnv :: GlobalEnv -> GenEnv
+newEnv genv =
+  GenEnv { varInfo = Map.empty, globalEnv = genv, inClass = Nothing }
 
-insertFunInfo :: GenEnv -> FunInfo -> GenEnv
-insertFunInfo env info =
-  env{funInfo = Map.insert (funIdent info) info $ funInfo env}
 
 instance PrintfArg Ident where
   formatArg (Ident s) _ = showString s
 
-getVarLoc :: Ident -> GenM VarLoc
+getVarLoc :: Ident -> GenM Operand
 getVarLoc ident = do
   env <- ask
   case Map.lookup ident (varInfo env) of
-    Just (loc, _) -> return loc
+    Just (op, _) -> return op
     Nothing -> fail $ printf "internal error: variable %s not found" ident
 
-getFunInfo :: Ident -> GenM FunInfo
-getFunInfo ident = do
-  env <- ask
-  case Map.lookup ident $ funInfo env of
-    Just x  -> return x
-    Nothing -> fail $ printf "internal error: function %s not found" ident
+-- getFunInfo :: Ident -> GenM FunSig
+-- getFunInfo ident = do
+--   GlobalEnv _ globalFuns <- globalEnv <$> ask
+--   case lookup ident globalFuns of
+--     Just funSig -> return funSig
+--     Nothing -> fail $ printf "internal error: function %s not found" ident
 
-insertVar ::  Ident -> VarLoc -> VType -> GenEnv -> GenEnv
-insertVar ident varloc type_ env =
-  env{varInfo = Map.insert ident (varloc, type_) (varInfo env)}
+computeFieldOffset :: ClassSig -> Ident -> Maybe Int
+computeFieldOffset classSig ident =
+  let allfields = map fst $ listfields (Just classSig)
+      prefix = takeWhile (ident /=) allfields
+      res = length prefix in
+  if res == length allfields then Nothing else Just res
+  where
+    listfields (Just cs) = listfields (super cs) ++ fields cs
+    listfields Nothing = []
+
+getFieldOffset :: GlobalEnv -> VType -> Ident -> Int
+getFieldOffset genv type_ ident =
+  fromMaybe (error "internal error - field not found") comp -- TODO?
+  where
+    comp = do
+      className <- extractClassName type_
+      classSig <- findClass genv className
+      computeFieldOffset classSig ident
+
+insertVar ::  Ident -> Operand -> VType -> GenEnv -> GenEnv
+insertVar ident op type_ env =
+  env{varInfo = Map.insert ident (op, type_) (varInfo env)}
 
 
 emit :: PackIns (Quad Operand e x) => Quad Operand e x -> GenM ()
@@ -93,11 +103,6 @@ emitBin con op r1 r2 = do
   emit $ con dest op r1 r2
   return dest
 
---emitPhi r1 r2 = do
---  dest <- newReg
---  emit $ QPhi dest r1 r2
---  return dest
-
 emitUn :: (Operand -> Operand -> Quad Operand O O) -> Operand -> GenM Operand
 emitUn con r = do
   dest <- newReg
@@ -106,12 +111,6 @@ emitUn con r = do
 
 emitParam :: Operand -> GenM ()
 emitParam operand = emit $ QParam operand
-
-emitLoadParam :: Int -> GenM Operand
-emitLoadParam i = do
-  dest <- newReg
-  emit $ QLoadParam dest i
-  return dest
 
 emitCall :: Ident -> GenM Operand
 emitCall ident = do
@@ -137,17 +136,23 @@ emitLoad reg = do
   emit $ QLoad new reg
   return new
 
-emitAlloca :: GenM Operand
-emitAlloca = do
-  new <- newReg
-  emit $ QAlloca new
-  return new
+-- emitAlloca :: GenM Operand
+-- emitAlloca = do
+--   new <- newReg
+--   emit $ QAlloca new
+--   return new
 
 emitLabel :: Label -> GenM ()
 emitLabel = emit . QLabel
 
 emitStore :: Operand -> Operand -> GenM ()
 emitStore dest src = emit $ QStore dest src
+
+emitGetFieldAddress :: Operand -> VType -> Ident -> GenM Operand
+emitGetFieldAddress base type_ ident = do
+  genv <- globalEnv <$> ask
+  let offset = 4 + 4 * getFieldOffset genv type_ ident
+  emitBin QBinOp QAdd base (LitInt $ toInteger offset)
 
 newReg :: GenM Operand
 newReg = do
@@ -165,24 +170,32 @@ newReg = do
 
 
 loadVar :: Ident -> GenM Operand
-loadVar ident = do
-  loc <- getVarLoc ident
-  case loc of
-    Stack reg -> return reg
-    Param i   -> emitLoadParam i
+loadVar =
+  getVarLoc
 
-storeVar :: Ident -> Operand -> GenM()
+storeVar :: Ident -> Operand -> GenM ()
 storeVar ident val = do
-  loc <- getVarLoc ident
-  case loc of
-    Stack reg -> emit $ QCopy reg val
-    Param _   -> fail "internal error: assignment to parameter"
+  reg <- getVarLoc ident
+  emit $ QCopy reg val
 
+genInitClass :: ClassSig -> GenM Operand
+genInitClass classSig = do
+  let fields = [] -- TODO
+  let size = 4 + 4 * length fields
+  emitParam $ LitInt $ toInteger size
+  allocated <- emitCallExternal "malloc"
+  -- TODO vtable
+  forM_ fields (gen allocated)
+  return allocated
+  where
+    gen base (ident, type_) = do
+       value <- genExpr (defaultValue type_)
+       field <- emitGetFieldAddress base (Class () $ name classSig) ident
+       emitStore field value
 
 genCall :: Ident -> GenM Operand
-genCall ident = do
-  info <- getFunInfo ident
-  if isPredef info then
+genCall ident =
+  if isPredef ident then
     let Ident s = ident
     in emitCallExternal s
   else
@@ -192,23 +205,24 @@ genDecl :: VType -> Item VType -> GenM GenEnv
 genDecl type_ item = do
   env <- ask
   let {(e, ident) = case item of
-    NoInit x ident -> (fmap (const x) (fromJust $ defaultValue type_), ident)
+    NoInit x ident ->
+      (fmap (const x) (defaultValue type_), ident)
     Init _ ident expr -> (expr, ident)}
   uniq <- freshUnique
   let (Ident s) = ident
   let new = Reg $ printf "v%d_%s" uniq s
-  let loc = Stack new
   r <- genExpr e
   --emitStore new r
   emit $ QCopy new r
-  return $ insertVar ident loc type_ env
+  return $ insertVar ident new type_ env
 
-defaultValue :: VType -> Maybe (Expr VType)
+defaultValue :: VType -> Expr VType
 defaultValue t = case t of
-  Int _ -> Just $ ELitInt intType 0
-  Bool _ -> Just $ ELitFalse boolType
-  Str _ -> Just $ EString stringType ""
-  _    -> Nothing
+  Int _  -> ELitInt intType 0
+  Bool _ -> ELitFalse boolType
+  Str _  -> EString stringType ""
+  Class _ ident -> ENew (Class () ident) ident
+  Void _ -> error "internal error: default value of type void doesn't exist"
 
 genExpr :: Expr VType -> GenM Operand
 genExpr x = case x of
@@ -225,7 +239,8 @@ genExpr x = case x of
     emitParam $ LitInt . toInteger $ (length corrected + 1)
     emitParam $ LitInt 4
     allocated <- emitCallExternal "calloc"
-    sequence_ [emitWrite allocated (offset-1) value | (offset, value) <- zip [1..(length corrected)] (map (LitInt . toInteger. fromEnum) corrected)]
+    sequence_ [emitWrite allocated (offset-1) value | (offset, value) <-
+                zip [1..(length corrected)] (map (LitInt . toInteger. fromEnum) corrected)]
     return allocated
   Neg _ expr -> do
     e <- genExpr expr
@@ -242,7 +257,7 @@ genExpr x = case x of
       e1 <- genExpr expr1
       e2 <- genExpr expr2
       emitBin QBinOp op e1 e2
-  EAdd type_ expr1 addop expr2 -> do
+  EAdd type_ expr1 addop expr2 ->
     case type_ of
       Str _ -> genAddStr expr1 expr2
       Int _ ->
@@ -258,7 +273,7 @@ genExpr x = case x of
     let t1 = gcopoint expr1
     case t1 of
       Str _ -> genCmpString relop expr1 expr2
-      _ ->
+      Int _ ->
         let {op = case relop of
           LTH _         -> L
           AbsLatte.LE _ -> IR.LE
@@ -270,6 +285,7 @@ genExpr x = case x of
           e1 <- genExpr expr1
           e2 <- genExpr expr2
           emitBin QCompOp op e1 e2
+      _ -> genCmpPhysicalEq relop expr1 expr2
   EAnd _ expr1 expr2 -> do
     e1 <- genExpr expr1
     [l1, l2] <- replicateM 2 freshLabel
@@ -290,6 +306,32 @@ genExpr x = case x of
     emit $ QGoto l2
     emitLabel l2
     return  e1
+  ENull _ _ ->
+    return $ LitInt 0
+  EThis _ ->
+    return $ Param 0
+  ENew _ ident -> do
+    genv <- globalEnv <$> ask
+    case findClass genv ident of
+      Just classSig -> genInitClass classSig
+      Nothing -> error $ "internal error: class not found" ++ show ident
+  EField _ expr ident -> do
+    e <- genExpr expr
+    fieldA <- emitGetFieldAddress e (gcopoint expr) ident
+    emitLoad fieldA
+
+
+genCmpPhysicalEq :: RelOp VType -> Expr VType -> Expr VType -> GenM Operand
+genCmpPhysicalEq relop e1 e2 = do
+  s1 <- genExpr e1
+  s2 <- genExpr e2
+  emitBin QCompOp op s1 s2
+  where
+    op = case relop of
+      EQU _ -> E
+      AbsLatte.NE _ -> IR.NE
+      _ ->
+        error "internal error - only equality comparisons for classes and bools"
 
 genCmpString :: RelOp VType -> Expr VType -> Expr VType -> GenM Operand
 genCmpString relop e1 e2 = do
@@ -399,6 +441,26 @@ genStmt x = case x of
   SExp _ expr -> do
     genExpr expr
     ask
+  AssField _ expr1 ident expr2 -> do
+    e1 <- genExpr expr1
+    fieldA <- emitGetFieldAddress e1 (gcopoint expr1) ident
+    e2 <- genExpr expr2
+    emitStore fieldA e2
+    ask
+  IncrField _ expr ident -> do
+    e <- genExpr expr
+    fieldA <- emitGetFieldAddress e (gcopoint expr) ident
+    fieldV <- emitLoad fieldA
+    res <- emitBin QBinOp QAdd fieldV (LitInt 1)
+    emitStore fieldA res
+    ask
+  DecrField _ expr ident -> do
+    e <- genExpr expr
+    fieldA <- emitGetFieldAddress e (gcopoint expr) ident
+    fieldV <- emitLoad fieldA
+    res <- emitBin QBinOp QSub fieldV (LitInt 1)
+    emitStore fieldA res
+    ask
 
 splitBlocks :: [Ins Operand] -> [[Ins Operand]]
 splitBlocks list =
@@ -425,18 +487,14 @@ makeBlock l =
       (QLabel label) = entry
   in (label, mkFirst entry H.<*> mkMiddles middle H.<*> mkLast exit)
 
-makeFunInfo :: Bool -> TopDef VType -> FunInfo
-makeFunInfo ispredef x = case x of
-  FnDef _ t ident args _ -> FunInfo {
-    funIdent = ident,
-    funType = makeFunSig t args,
-    isPredef = ispredef}
 
 makeFun :: GenEnv -> VType -> Ident -> [Arg VType] -> GenM b ->
   QFunDef (Label, Graph (Quad Operand) C C)
 makeFun initEnv type_ ident args gen =
   let fntype = makeFunSig type_ args
-      vars = map (\(Arg _ t ident, i) -> insertVar ident (Param i) $ void t)
+      paramShift = if isJust $ inClass initEnv then 1 else 0
+      vars = map (\(Arg _ t ident, i) ->
+                  insertVar ident (Param (i+paramShift)) $ void t)
         $ zip args [0..length args - 1]
       env = foldr (.) id vars initEnv
       state = newState
@@ -446,35 +504,39 @@ makeFun initEnv type_ ident args gen =
       graph = foldl (|*><*|) emptyClosedGraph blocks
     in QFunDef ident fntype (entry, graph) (toInteger . length $ args)
 
-checkIfZero :: Operand -> GenM ()
-checkIfZero reg = do
-  [l1, l2] <- replicateM 2 freshLabel
-  emit $ QGotoBool reg l2 l1
-  emitLabel l1
-  emit QError
-  emitLabel l2
+-- checkIfZero :: Operand -> GenM ()
+-- checkIfZero reg = do
+--   [l1, l2] <- replicateM 2 freshLabel
+--   emit $ QGotoBool reg l2 l1
+--   emitLabel l1
+--   emit QError
+--   emitLabel l2
 
-
-
-genFun :: GenEnv -> TopDef VType -> QFunDef (Label, Graph (Quad Operand) C C)
-genFun initEnv (FnDef x type_ ident args block) =
+genFun :: GenEnv -> VType -> Ident -> [Arg VType] -> Block VType ->
+  QFunDef (Label, Graph (Quad Operand) C C)
+genFun initEnv type_ ident args block =
   let {gen = do
     label <- freshLabel
     emitLabel label
-    genStmt $ BStmt x block
-    case defaultValue $ void type_ of
-      Just expr -> do
-        e <- genExpr expr
-        emit $ QRet e
-      Nothing -> emit $ QVRet}
+    genStmt $ BStmt voidType block
+    when (type_ == Void ()) $ emit QVRet}
   in makeFun initEnv (void type_) ident args gen
+
+genTopDef :: GlobalEnv -> TopDef VType -> [QFunDef (Label, Graph (Quad Operand) C C)]
+genTopDef genv (FnDef _ type_ ident args block) =
+  let env = newEnv genv in
+  [genFun env (void type_) ident args block]
+genTopDef genv (ClassDef _ ident _ classels) =
+  let env = (newEnv genv) {inClass = findClass genv ident} in
+  concatMap (genClassEl env) classels
+
+
+genClassEl :: GenEnv -> ClassEl VType -> [QFunDef (Label, Graph (Quad Operand) C C)]
+genClassEl _ _ = [] -- TODO
 
 genProgram :: (Program VType, GlobalEnv) -> [QFunDef (Label, Graph (Quad Operand) C C)]
 genProgram (Program _ topdefs, genv) =
-  let predefinfos = map (makeFunInfo True) Frontend.predefs
-      infos = map (makeFunInfo False) topdefs
-      initEnv = foldl insertFunInfo newEnv $ infos ++ predefinfos
-  in map (genFun initEnv) topdefs
+  concatMap (genTopDef genv) topdefs
 
 instance ShowLinRepr (Label, Graph (Quad Operand) C C) where
   showlr (_, g) = showGraph show g

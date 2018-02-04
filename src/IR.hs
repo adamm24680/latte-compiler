@@ -17,15 +17,18 @@ import Frontend (VType, FunSig)
 
 data Operand = Reg String
   | LitInt Integer
+  | Param Int
   -- |Local Ident
   deriving(Eq, Ord)
 instance Show Operand where
   show (Reg i) = i
   show (LitInt i) = show i
+  show (Param i) = "param_" ++ show i
 instance PrintfArg Operand where
   formatArg x _ = case x of
     Reg s -> showString s
     LitInt i -> shows i
+    Param i -> showString $ "param_" ++ show i
     --Local (Ident s) -> showString s
 
 data BinOp = QAdd | QSub | QMul | QDiv | QMod deriving(Eq)

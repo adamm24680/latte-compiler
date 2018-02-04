@@ -35,6 +35,7 @@ instance Show (PhysOp X86Reg) where
   show (PhysReg r)   = show r
   show (Constant i)  = show i
   show (StackSlot i) = "[" ++ show Ebp ++ "-"++ show (4*(i+1))++"]"
+  show (StackParam i) = "[" ++ show Ebp ++ "+"++ show (4*(i+2))++"]"
   show NoReg         = "__noreg__"
 
 
@@ -59,6 +60,7 @@ convOp pr = case pr of
   PhysReg reg -> PReg reg
   Constant i  -> PImm $ fromInteger i
   StackSlot i -> PEAddress $ AOff ebp (-4 * (i+1))
+  StackParam i -> PEAddress $ AOff ebp (4 * (i+2))
   NoReg       -> NoX86Reg
 
 toX86Label :: Label -> X86Label
