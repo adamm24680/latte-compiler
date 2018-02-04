@@ -70,12 +70,9 @@ data Quad t e x where
   QCall :: t -> Ident -> Quad t O O
   QCallExternal :: t -> String -> Quad t O O
   QLabel :: Label -> Quad t C O
-  --QPhi :: t -> t -> t -> Quad O O
   QVRet :: Quad t O C
   QRet :: t -> Quad t O C
-  QAlloca :: t -> Quad t O O
   QError :: Quad t O C
-  QLoadParam :: t -> Int -> Quad t O O
 deriving instance Eq t => Eq (Quad t e x)
 
 data Ins t =
@@ -134,13 +131,10 @@ instance PrintfArg t => Show (Quad t e x) where
      QParam r -> printf "  param %s" r
      QCall d l -> printf "  %s = call %s" d (show l)
      QCallExternal d l -> printf "  %s = call external %s" d l
-     --QPhi d s1 s2 -> printf "  %s = phi(%s, %s)" d s1 s2
      QVRet -> "  ret"
      QRet r -> printf "  ret %s" r
      QLabel l -> printf "%s:" l
-     QAlloca d -> printf "  %s = alloca" d
      QError -> printf "  error()"
-     QLoadParam d i -> printf "  %s = loadParam %d" d i
 
 qmap :: (a -> b) -> Quad a e x -> Quad b e x
 qmap f q = case q of
@@ -161,9 +155,9 @@ qmap f q = case q of
   QVRet -> QVRet
   QRet r -> QRet (f r)
   QLabel l -> QLabel l
-  QAlloca d -> QAlloca (f d)
+--  QAlloca d -> QAlloca (f d)
   QError -> QError
-  QLoadParam d i -> QLoadParam (f d) i
+--  QLoadParam d i -> QLoadParam (f d) i
 
 data QFunDef t = QFunDef Ident FunSig t Integer
 

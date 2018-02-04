@@ -62,13 +62,6 @@ getVarLoc ident = do
     Just (op, _) -> return op
     Nothing -> fail $ printf "internal error: variable %s not found" ident
 
--- getFunInfo :: Ident -> GenM FunSig
--- getFunInfo ident = do
---   GlobalEnv _ globalFuns <- globalEnv <$> ask
---   case lookup ident globalFuns of
---     Just funSig -> return funSig
---     Nothing -> fail $ printf "internal error: function %s not found" ident
-
 computeFieldOffset :: ClassSig -> Ident -> Maybe Int
 computeFieldOffset classSig ident =
   let allfields = map fst $ listfields (Just classSig)

@@ -73,11 +73,6 @@ genQ :: Ins X86Op -> GenM ()
 genQ (Fst q) = case q of
   QLabel l -> emit $ Label $ toX86Label l
 genQ (Mid q) = case q of
-  QAlloca d -> do
-    modify $ \s -> s{stackOffset = stackOffset s - 4}
-    off <- stackOffset <$> get
-    emit $ Mov d ebp
-    emit $ Add d $ PImm off
   QBinOp d op s1 s2 -> do
     emit $ Mov eax s1
     case op of
@@ -168,10 +163,10 @@ genQ (Mid q) = case q of
   QCallExternal d lbl -> do
     modify $ \st -> st{externs = Set.insert lbl $ externs st}
     emitFun d $ X86Label lbl
-  QLoadParam d i -> do
-    let addr = AOff ebp $ (i+2) *4
-    emit $ Mov eax $ PEAddress addr
-    emit $ Mov d eax
+  -- QLoadParam d i -> do
+  --   let addr = AOff ebp $ (i+2) *4
+  --   emit $ Mov eax $ PEAddress addr
+  --   emit $ Mov d eax
   where
     emitFun d lbl = do
       emit $ Push ecx
@@ -197,12 +192,7 @@ genQ (Lst q) = case q of
   QError -> emit $ Call $ PLabel $ X86Label "abort"
 
 genFun :: (QFunDef [Ins (PhysOp X86Reg)], Int) -> GenM ()
-genFun (QFunDef ident type_ insns parms, locals) = do
-  let allocas = length $ filter id $
-                  map (\ins -> case ins of
-                                Mid (QAlloca _) -> True
-                                _               -> False)
-                  insns
+genFun (QFunDef ident _ insns _, locals) = do
   let insns2 = map (fmap convOp) insns
   modify $ \s -> s {stackOffset = -4 * locals}
   when (ident == Ident "main") $ emit $ Label $ X86Label "main"
@@ -211,7 +201,7 @@ genFun (QFunDef ident type_ insns parms, locals) = do
 
   emit $ Push ebp
   emit $ Mov ebp esp
-  emit $ Sub esp $ PImm $ 4 * (allocas + locals)
+  emit $ Sub esp $ PImm $ 4 * locals
   emit $ Push ebx
   emit $ Push esi
   emit $ Push edi
@@ -220,7 +210,7 @@ genFun (QFunDef ident type_ insns parms, locals) = do
   emit $ Pop edi
   emit $ Pop esi
   emit $ Pop ebx
-  emit $ Add esp $ PImm $ 4 * (allocas + locals)
+  emit $ Add esp $ PImm $ 4 * locals
   emit $ Pop ebp
   emit Ret
 

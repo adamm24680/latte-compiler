@@ -63,9 +63,9 @@ liveTransfer = mkBTransfer tr
       QCallExternal d _  -> delUse d f
       QVRet              -> fact_bot liveLattice
       QRet r             -> addUse r $ fact_bot liveLattice
-      QAlloca d          -> delUse d f
+      --QAlloca d          -> delUse d f
       QError             -> fact_bot liveLattice
-      QLoadParam d _     -> delUse d f
+      --QLoadParam d _     -> delUse d f
     delUse = Set.delete
     addUse o f =
       case o of
@@ -88,8 +88,6 @@ deadElimRewrite = mkBRewrite3 elimCO elimOO elimOC
       QNeg d _        -> elimIf d
       QNot d _        -> elimIf d
       QLoad d _       -> elimIf d
-      QAlloca d       -> elimIf d
-      QLoadParam d _  -> elimIf d
       _               -> Just $ mkMiddle $ LiveAnnotated (f, q)
       where
         elimIf d =

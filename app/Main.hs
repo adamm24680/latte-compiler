@@ -21,12 +21,8 @@ genIR :: (Program VType, GlobalEnv) -> IO String
 genIR p = do
   let l = genProgram p
   let l1 = map propOptFun l
-  --let l2 = map deadElimOptFun l1
   let l3 = map livenessAnn l1
   let l4 = genNasmRepr l3
-  --let l4 :: [([LiveVars], [Ins Operand])]
-  --    l4 = map lineariseAnnotated l3
-  --let (l5,_) = unzip $ map (linearScan [0..4]) l4
   return $ unlines l4
 
 runFile :: FilePath -> IO ()
