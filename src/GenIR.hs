@@ -21,7 +21,6 @@ import           Frontend
 import           Generics.Deriving.Copoint (gcopoint)
 import           IR
 import           Text.Printf
-import Debug.Trace
 
 
 data GenState = GenState {
@@ -174,12 +173,6 @@ emitLoad reg = do
   emit $ QLoad new reg
   return new
 
--- emitAlloca :: GenM Operand
--- emitAlloca = do
---   new <- newReg
---   emit $ QAlloca new
---   return new
-
 emitLabel :: Label -> GenM ()
 emitLabel = emit . QLabel
 
@@ -283,13 +276,12 @@ genExpr x = case x of
     genCall ident
   EMethod _ expr ident exprs -> do
     e <- genExpr expr
-    emitParam e
     vs <- mapM genExpr exprs
+    emitParam e
     mapM_ emitParam vs
     genv <- globalEnv <$> ask
     let methodIndex = getMethodIndex genv (gcopoint expr) ident
     emitCallVirtual e methodIndex
-
   EString _ string -> do
     let corrected = drop 1 (take (length string - 1) string)
     emitParam $ LitInt . toInteger $ (length corrected + 1)

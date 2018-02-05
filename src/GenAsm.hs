@@ -72,7 +72,7 @@ exitLabel = X86Label ".exit"
 genQ :: Ins X86Op -> GenM ()
 genQ (Fst q) = case q of
   QLabel l -> emit $ Label $ toX86Label l
-genQ (Mid q) = (newLabel >>= \x -> emit $ Label $ x) >> case q of
+genQ (Mid q) = case q of
   QBinOp d op s1 s2 -> do
     emit $ Mov eax s1
     case op of
@@ -208,7 +208,6 @@ genFun (QFunDef ident _ insns _, locals) = do
   let errorS = "internal error - function " ++ show ident ++ " not found"
   fnlabel <- (fromMaybe (error errorS) . Map.lookup ident . funMapping) <$> get
   emit $ Label fnlabel
-
   emit $ Push ebp
   emit $ Mov ebp esp
   emit $ Sub esp $ PImm $ 4 * locals
@@ -256,9 +255,9 @@ genVTables list mapping =
 genNasmRepr :: [QFunDef (Label, Graph LiveAnnotated C C)] -> [QVTable]-> [String]
 genNasmRepr funlist vtables = [sectdecl, globdecl, extdecl] ++ inslist ++ vtabledecl
   where
+    unIdent (Ident s) = s
     mapping = Map.fromList $
-      zip (map (\(QFunDef ident _ _ _) -> ident) funlist) $
-        map (\i -> X86Label $ "F"++ show i) [1..length funlist]
+      map (\(QFunDef ident _ _ _) -> (ident, X86Label $ "F_"++ unIdent ident)) funlist
     vtablemapping = Map.fromList $
       zip (map (\(QVTable ident l) -> ident) vtables) $
         map (\i -> X86Label $ "VT"++ show i) [1..length funlist]

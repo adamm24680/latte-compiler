@@ -21,7 +21,7 @@ class IntQueue {
     last.setElem(x);
     if (self.isEmpty())
       front = last;
-    else 
+    else
       rear.setNext(last);
     rear = last;
   }
@@ -57,5 +57,3 @@ int main () {
   printInt(q.size());
   return 0;
 }
-
-     

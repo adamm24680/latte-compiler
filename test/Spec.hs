@@ -11,8 +11,9 @@ main = do
   counter
   linked
   points
+  shapes
   queue
-  -- bad
+  bad
 
 core :: IO ()
 core = forM_ [1..22] (coreTestCase "good/core")
