@@ -18,7 +18,6 @@ import           Liveness                   (LiveAnnotated)
 import           X86DSL
 
 
-
 data GenSt = GenSt {
   instrs      :: [X86Ins] ,
   funMapping  :: Map.Map Ident X86Label,
@@ -73,7 +72,7 @@ exitLabel = X86Label ".exit"
 genQ :: Ins X86Op -> GenM ()
 genQ (Fst q) = case q of
   QLabel l -> emit $ Label $ toX86Label l
-genQ (Mid q) = case q of
+genQ (Mid q) = (newLabel >>= \x -> emit $ Label $ x) >> case q of
   QBinOp d op s1 s2 -> do
     emit $ Mov eax s1
     case op of

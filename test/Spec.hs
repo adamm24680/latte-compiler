@@ -5,7 +5,14 @@ import           System.Process    (callCommand)
 import           Text.Printf
 
 main :: IO ()
-main = core >> struct >> bad
+main = do
+  core
+  struct
+  counter
+  linked
+  points
+  queue
+  -- bad
 
 core :: IO ()
 core = forM_ [1..22] (coreTestCase "good/core")
@@ -13,8 +20,14 @@ core = forM_ [1..22] (coreTestCase "good/core")
 bad :: IO ()
 bad = forM_ [1..27] (testBad "bad/bad")
 
-struct :: IO ()
+
 struct = testCase "extensions/struct/list"
+counter = testCase "extensions/objects1/counter"
+linked = testCase "extensions/objects1/linked"
+points = testCase "extensions/objects1/points"
+queue = testCase "extensions/objects1/queue"
+shapes = testCase "extensions/objects2/shapes"
+
 
 coreTestCase :: String -> Int -> IO ()
 coreTestCase base i =

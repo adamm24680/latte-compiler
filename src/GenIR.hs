@@ -21,6 +21,7 @@ import           Frontend
 import           Generics.Deriving.Copoint (gcopoint)
 import           IR
 import           Text.Printf
+import Debug.Trace
 
 
 data GenState = GenState {
@@ -60,7 +61,7 @@ computeMethodIndex classSig ident =
       prefix = takeWhile (ident /=) allmethods in
   length prefix
   where
-    listmethods (Just cs) = listmethods (super cs) ++ fields cs
+    listmethods (Just cs) = listmethods (super cs) ++ methods cs
     listmethods Nothing = []
 
 computeFieldOffset :: ClassSig -> Ident -> Maybe Int
@@ -90,11 +91,18 @@ generateVTable sig =
           index = computeMethodIndex sig ident in
       Map.insert index newIdent vtable
 
-
+getMethodIndex :: GlobalEnv -> VType -> Ident -> Int
+getMethodIndex genv type_ ident =
+  fromMaybe (error "internal error - method not found") comp
+  where
+    comp = do
+      className <- extractClassName type_
+      classSig <- findClass genv className
+      Just $ computeMethodIndex classSig ident
 
 getFieldOffset :: GlobalEnv -> VType -> Ident -> Int
 getFieldOffset genv type_ ident =
-  fromMaybe (error "internal error - field not found") comp -- TODO?
+  fromMaybe (error "internal error - field not found") comp
   where
     comp = do
       className <- extractClassName type_
@@ -148,6 +156,12 @@ emitCallExternal str = do
   emit $ QCallExternal dest str
   return dest
 
+emitCallVirtual :: Operand -> Int -> GenM Operand
+emitCallVirtual src index = do
+  dest <- newReg
+  emit $ QCallVirtual dest src index
+  return dest
+
 emitWrite :: Operand -> Int -> Operand -> GenM ()
 emitWrite base offset value = do
   dest <- emitBin QBinOp QAdd base (LitInt . toInteger $(offset))
@@ -178,6 +192,12 @@ emitGetFieldAddress base type_ ident = do
   let offset = 4 + 4 * getFieldOffset genv type_ ident
   emitBin QBinOp QAdd base (LitInt $ toInteger offset)
 
+emitLoadVtable :: Ident -> GenM Operand
+emitLoadVtable ident = do
+  dest <- newReg
+  emit $ QLoadVtable dest ident
+  return dest
+
 newReg :: GenM Operand
 newReg = do
   state <- get
@@ -204,19 +224,20 @@ storeVar ident val = do
 
 genInitClass :: ClassSig -> GenM Operand
 genInitClass classSig = do
-  let fields = getFields $ Just classSig
-  let size = 4 + 4 * length fields
+  let flds = getFields $ Just classSig
+  let size = 4 + 4 * length flds
   emitParam $ LitInt $ toInteger size
   allocated <- emitCallExternal "malloc"
-  -- TODO vtable
-  forM_ fields (gen allocated)
+  forM_ flds (gen allocated)
+  vtable <- emitLoadVtable $ name classSig
+  emitStore allocated vtable
   return allocated
   where
     gen base (ident, type_) = do
        value <- genExpr (defaultValue type_)
        field <- emitGetFieldAddress base (Class () $ name classSig) ident
        emitStore field value
-    getFields (Just classSig) = getFields (super classSig) ++ []
+    getFields (Just sig) = getFields (super sig) ++ fields sig
     getFields Nothing = []
 
 genCall :: Ident -> GenM Operand
@@ -247,7 +268,7 @@ defaultValue t = case t of
   Int _  -> ELitInt intType 0
   Bool _ -> ELitFalse boolType
   Str _  -> EString stringType ""
-  Class _ ident -> ENew (Class () ident) ident
+  Class _ ident -> ENull (Class () ident) ident
   Void _ -> error "internal error: default value of type void doesn't exist"
 
 genExpr :: Expr VType -> GenM Operand
@@ -260,6 +281,15 @@ genExpr x = case x of
     vs <- mapM genExpr exprs
     mapM_ emitParam vs
     genCall ident
+  EMethod _ expr ident exprs -> do
+    e <- genExpr expr
+    emitParam e
+    vs <- mapM genExpr exprs
+    mapM_ emitParam vs
+    genv <- globalEnv <$> ask
+    let methodIndex = getMethodIndex genv (gcopoint expr) ident
+    emitCallVirtual e methodIndex
+
   EString _ string -> do
     let corrected = drop 1 (take (length string - 1) string)
     emitParam $ LitInt . toInteger $ (length corrected + 1)
@@ -548,9 +578,9 @@ genTopDef genv (ClassDef _ ident _ classels) =
   let classSig = fromMaybe (error "class not found in global env") $
                     findClass genv ident
       env = (newEnv genv) {inClass = Just classSig}
-      vtable = QVTable (name classSig) $ Map.elems $ generateVTable classSig in -- ascending order of keys
+      vtable = QVTable (name classSig) $  Map.elems $
+          generateVTable classSig in
   (concatMap (genClassEl env classSig) classels, Just vtable)
-
 
 genClassEl :: GenEnv -> ClassSig -> ClassEl VType ->
   [QFunDef (Label, Graph (Quad Operand) C C)]
