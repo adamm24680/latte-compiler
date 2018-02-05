@@ -50,10 +50,10 @@ newLabel = do
   return $ X86Label $ ".tl_"++ show num
 
 linearizeAndAlloc :: QFunDef (Label, Graph LiveAnnotated C C) ->
-  (QFunDef [Ins (PhysOp X86Reg)], Int)
+  (QFunDef [Ins (PhysOp X86Reg)], Int, [X86Reg])
 linearizeAndAlloc (QFunDef ident type_ g parms) =
-  (QFunDef ident type_ g2 parms, i)
-  where (g2, i) = linearScan [Ebx, Ecx, Edx, Edi, Esi] $ linearizeAnnotated g
+  (QFunDef ident type_ g2 parms, i, l)
+  where (g2, i, l) = linearScan [Ebx, Ecx, Edx, Edi, Esi] $ linearizeAnnotated g
 
 convOp :: PhysOp X86Reg -> X86Op
 convOp pr = case pr of
@@ -198,27 +198,30 @@ genQ (Lst q) = case q of
   QVRet -> emit $ Jmp $ PLabel exitLabel
   QError -> emit $ Call $ PLabel $ X86Label "abort"
 
-genFun :: (QFunDef [Ins (PhysOp X86Reg)], Int) -> GenM ()
-genFun (QFunDef ident _ insns _, locals) = do
+genFun :: (QFunDef [Ins (PhysOp X86Reg)], Int, [X86Reg]) -> GenM ()
+genFun (QFunDef ident _ insns _, locals, usedRegs) = do
   let insns2 = map (fmap convOp) insns
   modify $ \s -> s {stackOffset = -4 * locals}
   when (ident == Ident "main") (do
     emit $ Label $ X86Label "main"
     genLoadVTables)
   let errorS = "internal error - function " ++ show ident ++ " not found"
+  let saveEbx = Ebx `elem` usedRegs
+  let saveEsi = Esi `elem` usedRegs
+  let saveEdi = Edi `elem` usedRegs
   fnlabel <- (fromMaybe (error errorS) . Map.lookup ident . funMapping) <$> get
   emit $ Label fnlabel
   emit $ Push ebp
   emit $ Mov ebp esp
   emit $ Sub esp $ PImm $ 4 * locals
-  emit $ Push ebx
-  emit $ Push esi
-  emit $ Push edi
+  when saveEbx $ emit $ Push ebx
+  when saveEsi $ emit $ Push esi
+  when saveEdi $ emit $ Push edi
   forM_ insns2 genQ
   emit $ Label exitLabel
-  emit $ Pop edi
-  emit $ Pop esi
-  emit $ Pop ebx
+  when saveEdi $ emit $ Pop edi
+  when saveEsi $ emit $ Pop esi
+  when saveEbx $ emit $ Pop ebx
   emit $ Add esp $ PImm $ 4 * locals
   emit $ Pop ebp
   emit Ret
@@ -273,7 +276,7 @@ genNasmRepr funlist vtables = [sectdecl, globdecl, extdecl] ++ inslist ++ vtable
     generated = reverse $ instrs res
     rewrites1 = [elimNop, elimMov, elimAdd0]
     rewrites2 = [elimMov2, jmpElim]
-    rewrites3 = []
+    rewrites3 = [elimMiddleman, elimUnnecessaryMov]
     optimized = peepholeOpt rewrites1 rewrites2 rewrites3 generated []
     inslist = map show optimized
     vtabledecl = genVTables vtables vtablemapping
@@ -336,4 +339,28 @@ elimAdd0 i = case i of
 jmpElim i = case i of
   (Jmp (PLabel l1), Label l2) ->
     if l1 == l2 then Just [Label l2] else Nothing
+  _ -> Nothing
+
+elimMiddleman i =
+  case i of
+  (Mov (PReg Eax) (PReg x), op, Mov (PReg y) (PReg Eax) ) ->
+    if x == y then
+      case op of
+        Mov (PReg Eax) z -> Just [Mov (PReg y) z]
+        Add (PReg Eax) z -> Just [Add (PReg y) z]
+        Sub (PReg Eax) z -> Just [Sub (PReg y) z]
+        _ -> Nothing
+    else Nothing
+  _ -> Nothing
+
+elimUnnecessaryMov i =
+  case i of
+  (Mov (PReg x) z1, op, Mov (PReg y) z2) ->
+    if x == y && z1 == z2 then
+      case op of
+        Mov _ z | z /= PReg x -> Just [op, Mov (PReg y) z1]
+        Add _ z | z /= PReg x -> Just [op, Mov (PReg y) z1]
+        Sub _ z | z /= PReg x -> Just [op, Mov (PReg y) z1]
+        _ -> Nothing
+    else Nothing
   _ -> Nothing

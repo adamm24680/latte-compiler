@@ -7,7 +7,8 @@ import           Linearize
 import           Liveness
 
 import           Control.Monad.State
-import qualified Data.Map            as Map
+import           Data.List
+import qualified Data.Map.Strict     as Map
 import           Data.Maybe
 import qualified Data.Set            as Set
 
@@ -81,9 +82,12 @@ spillReg ranges reg = do
     [] -> modify $ \s -> s{spilled = Set.insert reg $ spilled s}
 
 
-linearScan :: Eq t => [t] -> ([LiveVars], [Ins Operand]) -> ([Ins (PhysOp t)], Int)
+linearScan :: Eq t => [t] -> ([LiveVars], [Ins Operand]) ->
+  ([Ins (PhysOp t)], Int, [t])
 linearScan regs (anns, prog) =
-  (filter filterTrivial $ map (fmap mappingFun) prog, Set.size spills)
+  (filter filterTrivial $ map (fmap mappingFun) prog,
+    Set.size spills,
+    nub $ Map.elems mapped)
   where
     ranges = computeLiveRanges anns
     (mapped, spills) =
