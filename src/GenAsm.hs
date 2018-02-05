@@ -8,7 +8,7 @@ import           Compiler.Hoopl             (C, Graph, Label)
 import           Control.Monad.State.Strict
 import           Data.List                  (intercalate)
 import qualified Data.Map                   as Map
-import           Data.Maybe                 (fromJust)
+import           Data.Maybe                 (fromMaybe)
 import qualified Data.Set                   as Set
 
 import           IR
@@ -25,18 +25,19 @@ data GenSt = GenSt {
   counter     :: Int,
   externs     :: Set.Set String,
   stackOffset :: Int,
-  params      :: [X86Op]
+  params      :: [X86Op],
+  vtables     :: (Map.Map Ident X86Label, [QVTable])
 }
 
 type GenM a = State GenSt a
 
 
 instance Show (PhysOp X86Reg) where
-  show (PhysReg r)   = show r
-  show (Constant i)  = show i
-  show (StackSlot i) = "[" ++ show Ebp ++ "-"++ show (4*(i+1))++"]"
+  show (PhysReg r)    = show r
+  show (Constant i)   = show i
+  show (StackSlot i)  = "[" ++ show Ebp ++ "-"++ show (4*(i+1))++"]"
   show (StackParam i) = "[" ++ show Ebp ++ "+"++ show (4*(i+2))++"]"
-  show NoReg         = "__noreg__"
+  show NoReg          = "__noreg__"
 
 
 emit :: X86Ins -> GenM ()
@@ -57,11 +58,11 @@ linearizeAndAlloc (QFunDef ident type_ g parms) =
 
 convOp :: PhysOp X86Reg -> X86Op
 convOp pr = case pr of
-  PhysReg reg -> PReg reg
-  Constant i  -> PImm $ fromInteger i
-  StackSlot i -> PEAddress $ AOff ebp (-4 * (i+1))
+  PhysReg reg  -> PReg reg
+  Constant i   -> PImm $ fromInteger i
+  StackSlot i  -> PEAddress $ AOff ebp (-4 * (i+1))
   StackParam i -> PEAddress $ AOff ebp (4 * (i+2))
-  NoReg       -> NoX86Reg
+  NoReg        -> NoX86Reg
 
 toX86Label :: Label -> X86Label
 toX86Label l = X86Label $ "." ++ show l
@@ -158,15 +159,22 @@ genQ (Mid q) = case q of
   QParam s ->
     modify $ \st -> st {params = s : params st}
   QCall d ident -> do
-    fnLabel <- (fromJust. Map.lookup ident . funMapping) <$> get
-    emitFun d fnLabel
+    let errorS = "internal error - function not found"
+    fnLabel <- (fromMaybe (error errorS) . Map.lookup ident . funMapping) <$> get
+    emitFun d $ PLabel fnLabel
   QCallExternal d lbl -> do
     modify $ \st -> st{externs = Set.insert lbl $ externs st}
-    emitFun d $ X86Label lbl
-  -- QLoadParam d i -> do
-  --   let addr = AOff ebp $ (i+2) *4
-  --   emit $ Mov eax $ PEAddress addr
-  --   emit $ Mov d eax
+    emitFun d $ PLabel $ X86Label lbl
+  QCallVirtual d s i -> do
+    emit $ Mov eax s
+    emit $ Mov eax (PEAddress $ AReg eax)
+    emit $ Mov eax (PEAddress $ AOff eax (4 * i))
+    emitFun d $ PReg eax
+  QLoadVtable d ident -> do
+    vtbls <- gets $ fst. vtables
+    let vtable = fromMaybe (error "internal error - vtable not found)") $
+                  Map.lookup ident vtbls
+    emit $ Mov d $ PLabel vtable
   where
     emitFun d lbl = do
       emit $ Push ecx
@@ -174,8 +182,8 @@ genQ (Mid q) = case q of
       ps <- params <$> get
       forM_ ps $ \op -> emit $ Push op
       modify $ \st -> st{params = []}
-      emit $ Call $ PLabel lbl
-      emit $ Add esp $ PImm (4* length ps)
+      emit $ Call lbl
+      emit $ Add esp $ PImm (4 * length ps)
       emit $ Pop edx
       emit $ Pop ecx
       emit $ Mov d eax
@@ -195,8 +203,11 @@ genFun :: (QFunDef [Ins (PhysOp X86Reg)], Int) -> GenM ()
 genFun (QFunDef ident _ insns _, locals) = do
   let insns2 = map (fmap convOp) insns
   modify $ \s -> s {stackOffset = -4 * locals}
-  when (ident == Ident "main") $ emit $ Label $ X86Label "main"
-  fnlabel <- (fromJust . Map.lookup ident . funMapping) <$> get
+  when (ident == Ident "main") (do
+    emit $ Label $ X86Label "main"
+    genLoadVTables)
+  let errorS = "internal error - function " ++ show ident ++ " not found"
+  fnlabel <- (fromMaybe (error errorS) . Map.lookup ident . funMapping) <$> get
   emit $ Label fnlabel
 
   emit $ Push ebp
@@ -216,16 +227,47 @@ genFun (QFunDef ident _ insns _, locals) = do
 
   modify $ \s -> s {stackOffset = 0}
 
-genNasmRepr :: [QFunDef (Label, Graph LiveAnnotated C C)] -> [String]
-genNasmRepr funlist = [sectdecl, globdecl, extdecl] ++ inslist
+genLoadVTables :: GenM ()
+genLoadVTables = do
+  (mapping, vtables) <- gets vtables
+  forM_ vtables $ loadtable mapping
+  where
+    loadtable mapping (QVTable ident funs) = do
+      let table = fromMaybe (error "genLoadVTables") $ Map.lookup ident mapping
+      forM_ (zip [0..] funs) $ genLoadVTable table
+
+genLoadVTable :: X86Label -> (Int, Ident) -> GenM ()
+genLoadVTable label (index, ident) = do
+  mapping <- gets funMapping
+  let funLabel = fromMaybe (error "genLoadVTable") $ Map.lookup ident mapping
+  emit $ Mov edx $ PLabel label
+  emit $ Mov eax $ PLabel funLabel
+  emit $ Mov (PEAddress $ AOff edx $ 4 * index) eax
+
+genVTables :: [QVTable] -> Map.Map Ident X86Label -> [String]
+genVTables list mapping =
+  "section .bss" : tables
+  where
+    tables = concatMap genVTable list
+    extractLabel = fromMaybe (error "vtable for ident not found")
+    genVTable (QVTable ident funs) =
+      [show (extractLabel $ Map.lookup ident mapping) ++ ":",
+        "    resd " ++ show (length funs)]
+
+genNasmRepr :: [QFunDef (Label, Graph LiveAnnotated C C)] -> [QVTable]-> [String]
+genNasmRepr funlist vtables = [sectdecl, globdecl, extdecl] ++ inslist ++ vtabledecl
   where
     mapping = Map.fromList $
       zip (map (\(QFunDef ident _ _ _) -> ident) funlist) $
         map (\i -> X86Label $ "F"++ show i) [1..length funlist]
+    vtablemapping = Map.fromList $
+      zip (map (\(QVTable ident l) -> ident) vtables) $
+        map (\i -> X86Label $ "VT"++ show i) [1..length funlist]
     allocated = map linearizeAndAlloc funlist
     gen = forM_ allocated genFun
-    res = execState gen GenSt{instrs=[], funMapping = mapping, counter=0,
-                              externs = Set.empty, stackOffset=0, params = []}
+    res = execState gen GenSt{instrs = [], funMapping = mapping, counter = 0,
+                              externs = Set.empty, stackOffset = 0, params = [],
+                              vtables = (vtablemapping, vtables)}
     extrs = Set.insert "abort" $ externs res
     extdecl = "    extern "++ intercalate "," (Set.toList extrs)
     globdecl = "    global main"
@@ -236,6 +278,7 @@ genNasmRepr funlist = [sectdecl, globdecl, extdecl] ++ inslist
     rewrites3 = []
     optimized = peepholeOpt rewrites1 rewrites2 rewrites3 generated []
     inslist = map show optimized
+    vtabledecl = genVTables vtables vtablemapping
 
 
 type Rewrite1 = X86Ins -> Maybe [X86Ins]

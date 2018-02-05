@@ -19,10 +19,10 @@ import GenAsm
 
 genIR :: (Program VType, GlobalEnv) -> IO String
 genIR p = do
-  let l = genProgram p
+  let (l, vtables) = genProgram p
   let l1 = map propOptFun l
   let l3 = map livenessAnn l1
-  let l4 = genNasmRepr l3
+  let l4 = genNasmRepr l3 vtables
   return $ unlines l4
 
 runFile :: FilePath -> IO ()

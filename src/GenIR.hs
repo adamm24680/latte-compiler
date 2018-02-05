@@ -15,7 +15,7 @@ import           Compiler.Hoopl            (C, Graph, Label, O, Unique,
 import qualified Compiler.Hoopl            as H ((<*>))
 import           Control.Monad
 import           Control.Monad.RWS
-import qualified Data.Map                  as Map
+import qualified Data.Map.Strict                  as Map
 import           Data.Maybe
 import           Frontend
 import           Generics.Deriving.Copoint (gcopoint)
@@ -51,16 +51,17 @@ newEnv :: GlobalEnv -> GenEnv
 newEnv genv =
   GenEnv { varInfo = Map.empty, globalEnv = genv, inClass = Nothing }
 
-
 instance PrintfArg Ident where
   formatArg (Ident s) _ = showString s
 
-getVarLoc :: Ident -> GenM Operand
-getVarLoc ident = do
-  env <- ask
-  case Map.lookup ident (varInfo env) of
-    Just (op, _) -> return op
-    Nothing -> fail $ printf "internal error: variable %s not found" ident
+computeMethodIndex :: ClassSig -> Ident -> Int
+computeMethodIndex classSig ident =
+  let allmethods = map fst $ listmethods (Just classSig)
+      prefix = takeWhile (ident /=) allmethods in
+  length prefix
+  where
+    listmethods (Just cs) = listmethods (super cs) ++ fields cs
+    listmethods Nothing = []
 
 computeFieldOffset :: ClassSig -> Ident -> Maybe Int
 computeFieldOffset classSig ident =
@@ -72,6 +73,25 @@ computeFieldOffset classSig ident =
     listfields (Just cs) = listfields (super cs) ++ fields cs
     listfields Nothing = []
 
+generateVTable :: ClassSig -> Map.Map Int Ident
+generateVTable sig =
+  let {supervtable = case super sig of
+                      Just supersig -> generateVTable supersig
+                      Nothing -> Map.empty} in
+  let extendedvtable = foldl insertnew supervtable (map fst$ methods sig) in
+  foldl updatevtable extendedvtable (overrides sig)
+  where
+    updatevtable vtable ident =
+      let idx = computeMethodIndex sig ident
+          newIdent = encodeMethodName sig ident in
+      Map.adjust (const newIdent) idx vtable
+    insertnew vtable ident =
+      let newIdent = encodeMethodName sig ident
+          index = computeMethodIndex sig ident in
+      Map.insert index newIdent vtable
+
+
+
 getFieldOffset :: GlobalEnv -> VType -> Ident -> Int
 getFieldOffset genv type_ ident =
   fromMaybe (error "internal error - field not found") comp -- TODO?
@@ -81,10 +101,21 @@ getFieldOffset genv type_ ident =
       classSig <- findClass genv className
       computeFieldOffset classSig ident
 
+encodeMethodName :: ClassSig -> Ident -> Ident
+encodeMethodName classSig (Ident s) =
+  let (Ident className) = name classSig in
+  Ident $ s ++ "@" ++ className
+
+getVarLoc :: Ident -> GenM Operand
+getVarLoc ident = do
+  env <- ask
+  case Map.lookup ident (varInfo env) of
+    Just (op, _) -> return op
+    Nothing -> fail $ printf "internal error: variable %s not found" ident
+
 insertVar ::  Ident -> Operand -> VType -> GenEnv -> GenEnv
 insertVar ident op type_ env =
   env{varInfo = Map.insert ident (op, type_) (varInfo env)}
-
 
 emit :: PackIns (Quad Operand e x) => Quad Operand e x -> GenM ()
 emit a = tell [packIns a]
@@ -173,7 +204,7 @@ storeVar ident val = do
 
 genInitClass :: ClassSig -> GenM Operand
 genInitClass classSig = do
-  let fields = getFields $ Just classSig -- TODO
+  let fields = getFields $ Just classSig
   let size = 4 + 4 * length fields
   emitParam $ LitInt $ toInteger size
   allocated <- emitCallExternal "malloc"
@@ -487,9 +518,8 @@ makeFun :: GenEnv -> VType -> Ident -> [Arg VType] -> GenM b ->
   QFunDef (Label, Graph (Quad Operand) C C)
 makeFun initEnv type_ ident args gen =
   let fntype = makeFunSig type_ args
-      paramShift = if isJust $ inClass initEnv then 1 else 0
       vars = map (\(Arg _ t ident, i) ->
-                  insertVar ident (Param (i+paramShift)) $ void t)
+                  insertVar ident (Param i) $ void t)
         $ zip args [0..length args - 1]
       env = foldr (.) id vars initEnv
       state = newState
@@ -498,14 +528,6 @@ makeFun initEnv type_ ident args gen =
       entry = head labels
       graph = foldl (|*><*|) emptyClosedGraph blocks
     in QFunDef ident fntype (entry, graph) (toInteger . length $ args)
-
--- checkIfZero :: Operand -> GenM ()
--- checkIfZero reg = do
---   [l1, l2] <- replicateM 2 freshLabel
---   emit $ QGotoBool reg l2 l1
---   emitLabel l1
---   emit QError
---   emitLabel l2
 
 genFun :: GenEnv -> VType -> Ident -> [Arg VType] -> Block VType ->
   QFunDef (Label, Graph (Quad Operand) C C)
@@ -517,21 +539,32 @@ genFun initEnv type_ ident args block =
     when (type_ == Void ()) $ emit QVRet}
   in makeFun initEnv (void type_) ident args gen
 
-genTopDef :: GlobalEnv -> TopDef VType -> [QFunDef (Label, Graph (Quad Operand) C C)]
+genTopDef :: GlobalEnv -> TopDef VType ->
+  ([QFunDef (Label, Graph (Quad Operand) C C)], Maybe QVTable)
 genTopDef genv (FnDef _ type_ ident args block) =
   let env = newEnv genv in
-  [genFun env (void type_) ident args block]
+  ([genFun env (void type_) ident args block], Nothing)
 genTopDef genv (ClassDef _ ident _ classels) =
-  let env = (newEnv genv) {inClass = findClass genv ident} in
-  concatMap (genClassEl env) classels
+  let classSig = fromMaybe (error "class not found in global env") $
+                    findClass genv ident
+      env = (newEnv genv) {inClass = Just classSig}
+      vtable = QVTable (name classSig) $ Map.elems $ generateVTable classSig in -- ascending order of keys
+  (concatMap (genClassEl env classSig) classels, Just vtable)
 
 
-genClassEl :: GenEnv -> ClassEl VType -> [QFunDef (Label, Graph (Quad Operand) C C)]
-genClassEl _ _ = [] -- TODO
+genClassEl :: GenEnv -> ClassSig -> ClassEl VType ->
+  [QFunDef (Label, Graph (Quad Operand) C C)]
+genClassEl initEnv classSig (MethodDef _ type_ ident args block) =
+  let newIdent = encodeMethodName classSig ident
+      thisArg = Arg voidType (Class voidType $ name classSig) $ Ident "@this" in
+  [genFun initEnv (void type_) newIdent (thisArg : args) block]
+genClassEl _ _ _ = []
 
-genProgram :: (Program VType, GlobalEnv) -> [QFunDef (Label, Graph (Quad Operand) C C)]
+genProgram :: (Program VType, GlobalEnv) ->
+  ([QFunDef (Label, Graph (Quad Operand) C C)], [QVTable])
 genProgram (Program _ topdefs, genv) =
-  concatMap (genTopDef genv) topdefs
+  let (funs, vtables) = unzip $ map (genTopDef genv) topdefs
+  in (concat funs, catMaybes vtables)
 
 instance ShowLinRepr (Label, Graph (Quad Operand) C C) where
   showlr (_, g) = showGraph show g

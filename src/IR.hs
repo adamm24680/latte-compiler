@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleInstances, GADTs, StandaloneDeriving, UndecidableInstances #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
-module IR (Operand(..), Label, Quad(..), BinOp(..), PackIns(..),
+module IR (Operand(..), Label, Quad(..), BinOp(..), PackIns(..), QVTable(..),
     CompOp(..), QFunDef(..), qmap, Ins(..), ShowLinRepr(..), Ident(..))
   where
 
@@ -69,6 +69,8 @@ data Quad t e x where
   QParam :: t -> Quad t O O
   QCall :: t -> Ident -> Quad t O O
   QCallExternal :: t -> String -> Quad t O O
+  QCallVirtual :: t -> t -> Int -> Quad t O O
+  QLoadVtable :: t -> Ident -> Quad t O O
   QLabel :: Label -> Quad t C O
   QVRet :: Quad t O C
   QRet :: t -> Quad t O C
@@ -131,6 +133,8 @@ instance PrintfArg t => Show (Quad t e x) where
      QParam r -> printf "  param %s" r
      QCall d l -> printf "  %s = call %s" d (show l)
      QCallExternal d l -> printf "  %s = call external %s" d l
+     QCallVirtual d s i -> printf "  %s = call virtual %s:%d" d s i
+     QLoadVtable d l -> printf "  %s = load vtable %s" d (show l)
      QVRet -> "  ret"
      QRet r -> printf "  ret %s" r
      QLabel l -> printf "%s:" l
@@ -152,14 +156,15 @@ qmap f q = case q of
   QParam r -> QParam (f r)
   QCall d l -> QCall (f d) l
   QCallExternal d l -> QCallExternal (f d) l
+  QCallVirtual d s i -> QCallVirtual (f d) (f s) i
+  QLoadVtable d l -> QLoadVtable (f d) l
   QVRet -> QVRet
   QRet r -> QRet (f r)
   QLabel l -> QLabel l
---  QAlloca d -> QAlloca (f d)
   QError -> QError
---  QLoadParam d i -> QLoadParam (f d) i
 
 data QFunDef t = QFunDef Ident FunSig t Integer
+data QVTable = QVTable Ident [Ident]
 
 class ShowLinRepr t where
   showlr :: t -> String

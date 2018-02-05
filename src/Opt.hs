@@ -55,13 +55,12 @@ varIsLit = mkFTransfer ft
       QParam r -> f
       QCall d l -> Map.insert d CTop f
       QCallExternal d l -> Map.insert d CTop f
-      --QPhi d s1 s2 -> Map.insert d CTop f
+      QCallVirtual d s i -> Map.insert d CTop f
+      QLoadVtable d l -> Map.insert d CTop f
       QVRet -> mapEmpty
       QRet r -> mapEmpty
       QLabel l -> f
-      --QAlloca d -> Map.insert d CTop f
       QError -> mapEmpty
-      --QLoadParam d i -> Map.insert d CTop f
 
 propRewrite :: FuelMonad m => FwdRewrite m (Quad Operand) PropFact
 propRewrite = mkFRewrite rw
@@ -79,12 +78,11 @@ propRewrite = mkFRewrite rw
       QCopy d s          -> rewrite1 f (QCopy d) s
       QGotoBool r l1 l2  -> rewriteLast f (\r1 -> QGotoBool r1 l1 l2) r
       QParam r           -> rewrite1 f QParam r
-      --QPhi d s1 s2 -> rewrite2 f (QPhi d) s1 s2
       QRet r             -> rewriteLast f QRet r
       _                  -> Nothing
     lp f v = case Map.lookup v f of
       Just (Copied(LitInt i)) -> Just (LitInt i)
-      --Just (Copied o) -> Just o
+      -- Just (Copied o) -> Just o
       _                       -> Nothing
     rewrite2 f con s1 s2 =
       case (lp f s1, lp f s2) of
