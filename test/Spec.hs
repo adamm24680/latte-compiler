@@ -29,11 +29,11 @@ points = testCase "extensions/objects1/points"
 queue = testCase "extensions/objects1/queue"
 shapes = testCase "extensions/objects2/shapes"
 
-
 coreTestCase :: String -> Int -> IO ()
 coreTestCase base i =
   let name = printf "%s%03d" base i in
   testCase name
+
 
 testCase :: String -> IO ()
 testCase tname = do

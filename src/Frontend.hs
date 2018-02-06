@@ -77,6 +77,10 @@ boolType = Bool ()
 fmapVoidType :: Functor a => a b -> a VType
 fmapVoidType = fmap (const voidType)
 
+checkVoid :: Type a -> Bool
+checkVoid (Void _) = True
+checkVoid _ = False
+
 extractClassName :: Type a -> Maybe Ident
 extractClassName (Class _ ident) = Just ident
 extractClassName _               = Nothing
@@ -133,6 +137,7 @@ processTopDef (GlobalEnv cl fl) (ClassDef li ident classext classels) = do
     processFieldDecl :: Show a => [(Ident, VType)] -> ClassEl a ->
       Err [(Ident, VType)]
     processFieldDecl fieldl (FieldDef li type_ idents) = do
+      when (checkVoid type_) $ Left ("variable cannot have type void" ++ show li)
       let {checkFieldRedeclaration ident = do
         when (isJust $ lookup ident fieldl) $
           Left ("class field " ++ printTree ident ++ " redeclared" ++ show li)
@@ -177,6 +182,10 @@ raiseError :: String -> FrontendM a
 raiseError estr = do
   li <- lineData <$> ask
   lift $ Left (estr ++ show li)
+
+assertNotVoid :: Type a -> FrontendM ()
+assertNotVoid type_ =
+  when (checkVoid type_) $ raiseError "variable cannot have type void"
 
 isSuper :: GlobalEnv -> VType -> VType -> Bool
 isSuper genv (Class () subIdent) (Class () superIdent) =
@@ -247,9 +256,9 @@ findFun ident = do
         Just (sig, ident) -> return (sig, Just $ Class () ident)
         Nothing -> raiseError $ "procedure " ++ printTree ident ++ " not found"
 
-findAndAnnotate :: VarEnv -> Expr LineData -> Ident ->
-  (ClassSig -> [(Ident, a)]) -> FrontendM (Expr VType, a)
-findAndAnnotate env expr ident accessor = do
+findAndAnnotate :: (ClassSig -> [(Ident, a)]) -> VarEnv -> Expr LineData ->
+  Ident -> FrontendM (Expr VType, a)
+findAndAnnotate accessor env expr ident = do
   newExpr <- annotateExpr env expr
   genv <- globalEnv <$> ask
   result <-
@@ -258,6 +267,14 @@ findAndAnnotate env expr ident accessor = do
       Nothing -> raiseError $
         printTree expr ++ " does not have an element called " ++ printTree ident
   return (newExpr, result)
+
+findAndAnnotateMethod :: VarEnv -> Expr LineData -> Ident ->
+  FrontendM (Expr VType, FunSig)
+findAndAnnotateMethod = findAndAnnotate methods
+
+findAndAnnotateField :: VarEnv -> Expr LineData -> Ident ->
+  FrontendM (Expr VType, VType)
+findAndAnnotateField = findAndAnnotate fields
 
 annotateAndCheckArgs :: VarEnv -> Ident -> [Expr LineData] -> [VType] ->
   FrontendM [Expr VType]
@@ -305,12 +322,14 @@ annotateExpr env expression =
             return $ EMethod rtype (EThis cType) ident newExprs
           Nothing ->
             return $ EApp rtype ident newExprs
-      EString _ string -> return $ EString stringType string -- TODO sanitization?
+      EString _ string ->
+        let corrected = drop 1 (take (length string - 1) string) in -- fix for BNFC
+        return $ EString stringType corrected
       EField _ expr ident -> do
-        (newExpr, type_) <- findAndAnnotate env expr ident fields
+        (newExpr, type_) <- findAndAnnotateField env expr ident
         return $ EField type_ newExpr ident
       EMethod _ expr ident exprs -> do
-        (newExpr, FunSig rtype argtypes) <- findAndAnnotate env expr ident methods
+        (newExpr, FunSig rtype argtypes) <- findAndAnnotateMethod env expr ident
         newExprs <- annotateAndCheckArgs env ident exprs argtypes
         return $ EMethod rtype newExpr ident newExprs
       Neg _ expr -> do
@@ -378,7 +397,8 @@ annotateExpr env expression =
 
 annotateBlockVar :: VType -> (VarEnv, [Item VType]) -> Item LineData ->
   FrontendM (VarEnv, [Item VType])
-annotateBlockVar type_ (env@(currentEnv : rest), acc) item =
+annotateBlockVar type_ (env@(currentEnv : rest), acc) item = do
+  assertNotVoid type_
   case item of
     NoInit li ident -> local (\fenv -> fenv{lineData = li}) $ do
       newEnv <- insertDeclaration ident type_
@@ -408,6 +428,7 @@ annotateStmt env stmt =
         annBlock <- annotateBlock env block
         return (env, BStmt voidType annBlock)
       Decl _ type_ items -> do
+        assertNotVoid type_
         let foldf = annotateBlockVar $ void type_
         (newEnv, rres) <- foldM foldf (env, []) items
         let result = reverse rres
@@ -422,7 +443,7 @@ annotateStmt env stmt =
           Nothing ->
             return (env, Ass voidType ident newExpr)
       AssField _ expr1 ident expr2 -> do
-        (newExpr1, type_) <- findAndAnnotate env expr1 ident fields
+        (newExpr1, type_) <- findAndAnnotateField env expr1 ident
         newExpr2 <- annotateExpr env expr2
         checkTypes (gcopoint newExpr2) [type_]
         return (env, AssField voidType newExpr1 ident newExpr2)
@@ -435,7 +456,7 @@ annotateStmt env stmt =
           Nothing ->
             return (env, Incr voidType ident)
       IncrField _ expr ident -> do
-        (newExpr, type_) <- findAndAnnotate env expr ident fields
+        (newExpr, type_) <- findAndAnnotateField env expr ident
         checkTypes type_ [intType]
         return (env, IncrField voidType newExpr ident)
       Decr _ ident -> do
@@ -447,7 +468,7 @@ annotateStmt env stmt =
           Nothing ->
             return (env, Decr voidType ident)
       DecrField _ expr ident -> do
-        (newExpr, type_) <- findAndAnnotate env expr ident fields
+        (newExpr, type_) <- findAndAnnotateField env expr ident
         checkTypes type_ [intType]
         return (env, DecrField voidType newExpr ident)
       Ret _ expr -> do
@@ -495,6 +516,7 @@ annotateFun ::  ([Arg LineData], Block LineData ) ->
 annotateFun (args, block) = do
   let {insertArg acc (Arg _ type_ ident) =
     Map.insert ident (void type_) acc }
+  forM_ args (\(Arg _ type_ _) -> assertNotVoid type_)
   let initialEnv = foldl insertArg Map.empty args
   newBlock <- annotateBlock [initialEnv] block
   rettype <- returnType <$> ask

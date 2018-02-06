@@ -283,12 +283,11 @@ genExpr x = case x of
     let methodIndex = getMethodIndex genv (gcopoint expr) ident
     emitCallVirtual e methodIndex
   EString _ string -> do
-    let corrected = drop 1 (take (length string - 1) string)
-    emitParam $ LitInt . toInteger $ (length corrected + 1)
+    emitParam $ LitInt . toInteger $ (length string + 1)
     emitParam $ LitInt 4
     allocated <- emitCallExternal "calloc"
     sequence_ [emitWrite allocated (offset-1) value | (offset, value) <-
-                zip [1..(length corrected)] (map (LitInt . toInteger. fromEnum) corrected)]
+                zip [1..(length string)] (map (LitInt . toInteger. fromEnum) string)]
     return allocated
   Neg _ expr -> do
     e <- genExpr expr

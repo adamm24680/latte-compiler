@@ -74,8 +74,6 @@ Bool.      Type ::= "boolean" ;
 
 Void.      Type ::= "void" ;
 
-Array.     Type ::= Type "[]" ;
-
 Class.     Type ::= Ident ;
 
 separator  Type "," ;
